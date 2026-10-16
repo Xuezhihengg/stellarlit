@@ -221,7 +221,14 @@ const isSemantic = (kind: string): boolean =>
  */
 function paperRadius(citations: number, maxCitations: number): number {
   const t = Math.log10(Math.max(1, citations) + 1) / Math.log10(Math.max(10, maxCitations) + 1);
-  return 2.6 + Math.max(0, Math.min(1, t)) * 4.6;
+  /**
+   * 指数 1.6 与更小的基数,解决两个问题:
+   *   1. 之前"普遍偏大" —— 基数从 2.6 降到 1.4
+   *   2. 之前"引用量的差异不明显" —— 对数映射之后中低被引的论文
+   *      全挤在 0.3~0.5 这一段,再取 1.6 次方把它们拉开,
+   *      高被引才真正"鹤立鸡群"
+   */
+  return 1.4 + Math.pow(Math.max(0, Math.min(1, t)), 1.6) * 5.6;
 }
 
 export function buildScene(
@@ -268,9 +275,7 @@ export function buildScene(
       hovered: node.id === hoveredId,
       dimmed:
         (minYear !== null && node.year > 0 && node.year < minYear) ||
-        (dimmedKinds?.size
-          ? [...(relationKinds.get(node.id) ?? [])].every((k) => dimmedKinds.has(k))
-          : false),
+        (dimmedKinds?.size ? allKindsDimmed(relationKinds.get(node.id), dimmedKinds) : false),
       relationKinds: [...(relationKinds.get(node.id) ?? [])],
       motion: motionOf(node.id),
     });
@@ -465,6 +470,19 @@ export function buildScene(
     domains,
     bounds: boundsOf(nodes),
   };
+}
+
+/**
+ * 一颗星是否该被"关系筛选"淡出。
+ *
+ * 注意这里必须有 **length > 0** 这一条:数组为空时 `every()` 返回 true,
+ * 于是"没有任何语义关系的星"会被判定为"它的关系全被关掉了"而整片淡出。
+ * 引用边不算在内 —— 关掉引用边不该影响任何一颗星的明暗,它只是骨架。
+ */
+function allKindsDimmed(kinds: Iterable<string> | undefined, dimmed: ReadonlySet<string>): boolean {
+  if (!kinds) return false;
+  const list = [...kinds];
+  return list.length > 0 && list.every((k) => dimmed.has(k));
 }
 
 function centroid(list: Vec2[]): Vec2 {

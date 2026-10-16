@@ -31,7 +31,13 @@ interface StarfieldState {
   candidates: SeedCandidate[];
   query: string;
   selectedId: string | null;
-  /** 用户关掉了哪些关系类型(淡出对应星星与边,不是隐藏) */
+  /**
+   * 用户关掉了哪些关系类型(淡出对应星星与边,不是隐藏)。
+   *
+   * 引用边**默认关掉**:它是骨架,数量最多(实测 140 条可绘制的边里 112 条是引用),
+   * 全开时画面上是一张灰色的网,语义关系那二十几条反而被淹掉。
+   * 想看引用结构时从筛选栏打开即可。
+   */
   dimmedKinds: Set<string>;
   minYear: number | null;
   /** 流式构建的实时进度;null 表示当前没有在构建 */
@@ -69,7 +75,7 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
   candidates: [],
   query: "",
   selectedId: null,
-  dimmedKinds: new Set<string>(),
+  dimmedKinds: new Set<string>(["CITES"]),
   minYear: null,
   streamProgress: null,
 
@@ -208,6 +214,7 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
       selectedId: null,
       minYear: null,
       streamProgress: null,
+      dimmedKinds: new Set<string>(["CITES"]),
     }),
 }));
 

@@ -451,7 +451,7 @@ function drawNodes(
 
     const twinkle = 0.86 + 0.14 * Math.sin(time * 1.25 * n.motion.tws + n.motion.tw);
     const brightness = Math.max(0, Math.min(1, Math.log10(n.citations + 1) / Math.max(1, maxLog)));
-    const base = Math.max(2.2, Math.min(11, n.r * scale));
+    const base = Math.max(1.8, Math.min(9, n.r * scale));
     // 选中:幅度刻意压小 —— 反馈要看得见,但不该把整张图的注意力抢走
     const r = base * (1 + focus * 0.22) * (n.hovered ? 1.25 : 1) * (0.96 + 0.08 * twinkle);
 
@@ -462,10 +462,10 @@ function drawNodes(
      * 复述一个真实事实;所有星用同样的光晕倍数,等于把这层信息丢掉。
      */
     const glow = (ga: number) => hexA(domainToneBase(n.tone, themeNow), ga);
-    const haloScale = (4 + brightness * 5.5) * (1 + focus * 0.18);
-    const haloR = r * (n.hovered ? haloScale * 1.35 : haloScale);
+    const haloScale = (3 + brightness * 3.4) * (1 + focus * 0.12);
+    const haloR = r * (n.hovered ? haloScale * 1.25 : haloScale);
     const g = ctx.createRadialGradient(x, y, 0, x, y, haloR);
-    g.addColorStop(0, glow((n.hovered || focus > 0.01 ? 0.3 : 0.2) * twinkle * (1 + focus * 0.3)));
+    g.addColorStop(0, glow((n.hovered || focus > 0.01 ? 0.26 : 0.17) * twinkle * (1 + focus * 0.25)));
     g.addColorStop(0.45, glow(0.06 * twinkle));
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.globalAlpha = a;
@@ -545,23 +545,32 @@ function drawEdgeLabels(
   if (anim.focus < 0.12) return;
 
   /**
-   * 直接从"当前选中了谁"出发找边,而不是依赖场景里预先算好的 active 标志。
-   *
-   * 前者只有一个真相源(focusId),后者要在场景重建、边合并、筛选淡出
-   * 三条路径上都保持正确 —— 实测其中一条没跟上,标签就整批不出现,
-   * 而且画面上完全看不出是哪一步断了。
+   * 从"当前选中了谁"出发找边 —— 只有一个真相源,不依赖场景里预先算好的标志。
    */
   const focusIndex = scene.nodes.findIndex((n) => n.id === anim.focusId);
   if (focusIndex < 0) return;
 
+  /**
+   * 引用边也一起标。
+   *
+   * 之前只标语义边,于是画面上大半的线是没有说明的 —— 用户无法区分
+   * "这条线是引用"还是"这条线没标出来是什么"。引用本身就是一种关系类型,
+   * 它没有"判断依据"但有确切含义,标上"引用"两个字是诚实的做法。
+   *
+   * 仍然只标与当前选中星相连的边:全局标注等于给整张图加一层噪声。
+   */
   const shown = scene.edges
-    .filter((e) => e.layer === "semantic" && !e.faded && (e.a === focusIndex || e.b === focusIndex))
-    .sort((x, y) => y.confidence - x.confidence)
+    .filter((e) => !e.faded && (e.a === focusIndex || e.b === focusIndex))
+    .sort((x, y) => {
+      // 语义边优先,其次按置信度 —— 一排标签里,重要的一定在最前
+      const rank = (e: typeof x) => (e.layer === "semantic" ? 1e6 : 0) + e.confidence;
+      return rank(y) - rank(x);
+    })
     .slice(0, EDGE_LABEL_LIMIT);
-
   if (!shown.length) return;
 
   const appear = Math.min(1, Math.max(0, (anim.focus - 0.12) / 0.62));
+  const ease = 1 - (1 - appear) * (1 - appear);
 
   ctx.save();
   ctx.textAlign = "center";
@@ -575,45 +584,33 @@ function drawEdgeLabels(
     const by = fy[e.b];
     if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
 
-    const mx = (ax + bx) / 2;
-    const my = (ay + by) / 2;
-    if (mx < 40 || mx > width - 40 || my < 30 || my > height - 30) continue;
+    /**
+     * 标签落在**靠近选中星的那一端**,而不是边的中点。
+     *
+     * 中点会让所有标签散落在整张图上,眼睛要跟着每一条线走一遍才能找到它;
+     * 靠选中星这一端时,标签自然聚成一个扇形,读起来是"从这颗星出发的
+     * 若干种关系",而不是一堆散落的注释。
+     */
+    const fromA = e.a === focusIndex;
+    const t = 0.3 + ease * 0.06;
+    const mx = ax + (bx - ax) * (fromA ? t : 1 - t);
+    const my = ay + (by - ay) * (fromA ? t : 1 - t);
+    if (mx < 46 || mx > width - 46 || my < 30 || my > height - 30) continue;
 
-    const text = e.label;
-    const w = ctx.measureText(text).width;
-    const padX = 5;
-    const h = 16;
-
-    ctx.globalAlpha = appear * (level === "paper" ? 0.92 : 0.55);
-
-    // 底衬:星图线条密,没有底衬的文字读不出来。用极淡的圆角底而不是描边,
-    // 描边会让字看起来像贴纸
-    ctx.fillStyle = hexA(p.bg, 0.82);
-    roundRect(ctx, mx - w / 2 - padX, my - h / 2, w + padX * 2, h, 8);
-    ctx.fill();
-
+    /**
+     * 没有底衬:文字直接浮在边上。
+     * 底衬虽然好读,但它把每条边都变成一个"胶囊",亲密感全丢了 ——
+     * 现在靠加粗一点点字重和轻微的暗色描边保证在密集处的可读性。
+     */
+    ctx.globalAlpha = ease * (level === "paper" ? 0.95 : 0.6);
+    ctx.lineWidth = 2.6;
+    ctx.strokeStyle = hexA(p.bg, 0.72);
+    ctx.strokeText(e.label, mx, my);
     ctx.fillStyle = toneOf(e.tone, p);
-    ctx.fillText(text, mx, my + 0.5);
+    ctx.fillText(e.label, mx, my);
   }
 
   ctx.restore();
-}
-
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
 
 // ---------------------------------------------------------------------------

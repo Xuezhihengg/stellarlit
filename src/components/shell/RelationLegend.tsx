@@ -34,11 +34,32 @@ export function RelationLegend({ payload, dimmedKinds, onToggle }: RelationLegen
   const presets = payload.presets.filter((p) => p.enabled);
   if (!presets.length) return null;
 
+  /** 引用边和语义关系一样，是一个可开关的"关系类型"。 */
+  const citation = {
+    id: "citation",
+    label: "引用",
+    description: "来自 OpenAlex 的引用记录。它是星图的骨架，默认为暗色。",
+    tone: "var(--ink-3)",
+    dash: undefined as string | undefined,
+    directed: true,
+    kind: "CITES",
+    count: counts.get("CITES") ?? 0,
+  };
+
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      {presets.map((p) => {
-        const kind = Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "";
-        const n = counts.get(kind) ?? 0;
+      {[citation, ...presets.map((p) => ({
+        id: p.id,
+        label: p.label,
+        description: p.description,
+        tone: p.visual.tone,
+        dash: p.visual.dash,
+        directed: p.directed,
+        kind: Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "",
+        count: counts.get(Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "") ?? 0,
+      }))].map((p) => {
+        const kind = p.kind;
+        const n = p.count;
         const off = dimmedKinds.has(kind);
 
         return (
@@ -54,10 +75,10 @@ export function RelationLegend({ payload, dimmedKinds, onToggle }: RelationLegen
             <span
               className="h-px w-4 shrink-0"
               style={{
-                backgroundColor: p.visual.tone,
-                ...(p.visual.dash && p.visual.dash !== "none"
+                backgroundColor: p.tone,
+                ...(p.dash && p.dash !== "none"
                   ? {
-                      backgroundImage: `repeating-linear-gradient(90deg, ${p.visual.tone} 0 2px, transparent 2px 6px)`,
+                      backgroundImage: `repeating-linear-gradient(90deg, ${p.tone} 0 2px, transparent 2px 6px)`,
                       backgroundColor: "transparent",
                     }
                   : {}),

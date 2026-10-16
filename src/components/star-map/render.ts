@@ -167,7 +167,12 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
     drawNodes(ctx, scene, width, height, p, a.node, time, fx, fy, camera.scale, anim);
   }
 
-  // ---------- 5. 边上的关系类型 ----------
+  // ---------- 5a. 引用方向的粒子 ----------
+  if (a.edge > 0.01 && level !== "domain") {
+    drawCitationParticles(ctx, scene, p, fx, fy, anim, time);
+  }
+
+  // ---------- 5b. 语义关系的文字 ----------
   if (a.edge > 0.01) drawEdgeLabels(ctx, scene, width, height, p, fx, fy, anim, level);
 
   // ---------- 5. 标签 ----------
@@ -551,16 +556,20 @@ function drawEdgeLabels(
   if (focusIndex < 0) return;
 
   /**
-   * 引用边也一起标。
+   * 只标语义边。
    *
-   * 之前只标语义边,于是画面上大半的线是没有说明的 —— 用户无法区分
-   * "这条线是引用"还是"这条线没标出来是什么"。引用本身就是一种关系类型,
-   * 它没有"判断依据"但有确切含义,标上"引用"两个字是诚实的做法。
+   * 引用边一度也标了"引用"两个字,但那样每条线都要配一个词,
+   * 而引用**本身是一种有方向的流动**,用文字说"引用"等于把一个
+   * 一秒钟就能看到的事实写成句子。改用沿边流动的粒子指示方向 ——
+   * 粒子从"引用的那一方"流向"被引用的那一方",不用读文字就知道谁引了谁。
    *
-   * 仍然只标与当前选中星相连的边:全局标注等于给整张图加一层噪声。
+   * 语义边没有方向可言(或者方向不是重点),继续用文字说明。
    */
   const shown = scene.edges
-    .filter((e) => !e.faded && (e.a === focusIndex || e.b === focusIndex))
+    .filter(
+      (e) =>
+        e.label.length > 0 && !e.faded && (e.a === focusIndex || e.b === focusIndex),
+    )
     .sort((x, y) => {
       // 语义边优先,其次按置信度 —— 一排标签里,重要的一定在最前
       const rank = (e: typeof x) => (e.layer === "semantic" ? 1e6 : 0) + e.confidence;
@@ -613,6 +622,91 @@ function drawEdgeLabels(
   ctx.restore();
 }
 
+/**
+ * 引用方向粒子。
+ *
+ * 沿边流动的小点,方向 = 引用方向(引用者 → 被引用者)。
+ *
+ * 为什么这样比文字好:引用是有向的,而"有向"是一个**过程** ——
+ * 用静态文字标注去向,读的人要在脑子里再翻译一次;粒子直接把过程演出来。
+ * 这是整套视觉里唯一一处"动起来的信息",因此只在选中星体时出现,不常驻。
+ */
+function drawCitationParticles(
+  ctx: CanvasRenderingContext2D,
+  scene: Scene,
+  p: CanvasPalette,
+  fx: Float64Array,
+  fy: Float64Array,
+  anim: AnimState,
+  time: number,
+): void {
+  const focusIndex = scene.nodes.findIndex((n) => n.id === anim.focusId);
+  if (focusIndex < 0) return;
+
+  const appear = Math.min(1, Math.max(0, (anim.focus - 0.15) / 0.7));
+  if (appear < 0.02) return;
+
+  const links = scene.edges.filter(
+    (e) => e.kind === "CITES" && (e.a === focusIndex || e.b === focusIndex),
+  );
+  if (!links.length) return;
+
+  ctx.save();
+  ctx.globalCompositeOperation = p.blend;
+
+  for (const e of links) {
+    const ax = fx[e.a];
+    const ay = fy[e.a];
+    const bx = fx[e.b];
+    const by = fy[e.b];
+    if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
+
+    // 与 drawEdges 用同一套弧线参数,粒子才会正好落在线上
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    const seed = hashEdge(e.id);
+    const bow = Math.max(7, Math.min(30, len * 0.17)) * (seed < 0.5 ? -1 : 1) * (0.6 + seed * 0.8);
+    const cx = (ax + bx) / 2 + (-dy / Math.max(1, len)) * bow;
+    const cy = (ay + by) / 2 + (dx / Math.max(1, len)) * bow;
+
+    // 方向:贝塞尔是按 a→b 参数化的,若引用方向是 b→a 就把参数反过来
+    const forward = e.from === e.a;
+    // 长边跑得快一点,视觉速度才一致
+    const speed = 0.34 / Math.max(0.4, Math.min(2.2, len / 220));
+    const phase = seed;
+
+    for (let k = 0; k < 2; k++) {
+      const raw = (time * speed + phase + k * 0.5) % 1;
+      const u = forward ? raw : 1 - raw;
+      const iu = 1 - u;
+      const px = iu * iu * ax + 2 * iu * u * cx + u * u * bx;
+      const py = iu * iu * ay + 2 * iu * u * cy + u * u * by;
+
+      // 两端渐隐:粒子从引用者身上"生成",到被引用者身上"汇入"
+      const fade = Math.min(1, Math.min(u, 1 - u) / 0.14);
+      const r = 1.5 + 0.6 * fade;
+
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
+      g.addColorStop(0, hexA(p.accent, 0.95 * fade * appear));
+      g.addColorStop(0.4, hexA(p.accent, 0.3 * fade * appear));
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(px, py, r * 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = fade * appear;
+      ctx.fillStyle = p.ink;
+      ctx.beginPath();
+      ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.restore();
+}
+
 // ---------------------------------------------------------------------------
 // 标签
 // ---------------------------------------------------------------------------
@@ -639,7 +733,7 @@ function drawLabels(
   // ---------- 论文标签:只在推近时出现,且只标最重要的那些 ----------
   if (a.paperLabel > 0.02 && level === "paper") {
     const important = scene.nodes
-      .filter((n) => !n.dimmed && n.citations > 0)
+      .filter((n) => !n.dimmed && n.citations > 0 && n.id !== anim.focusId)
       .sort((x, y) => {
         // 种子与选中项永远优先,其余按被引量
         const rank = (n: typeof x) => (n.seed ? 1e9 : 0) + (n.selected || n.hovered ? 5e8 : 0) + n.citations;
@@ -658,17 +752,47 @@ function drawLabels(
       const isKey = n.seed || n.selected || n.hovered;
       const text = truncate(n.label, isKey ? 52 : 30);
       const r = Math.max(2.5, n.r * camera.scale);
-      const focus = n.selected ? anim.focus : 0;
-
-      // 选中项标题:从 12px 涨到 15.5px,透明度同步拉满 —— 用一个进度值驱动,
-      // 所以它是"涨开"而不是"跳大"
-      const size = 12 + focus * 1.6;
-      ctx.font = `${isKey ? size : 10.5}px ${SANS}`;
-      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel * (n.selected ? Math.min(1, anim.focus * 3) : 1);
-      ctx.fillStyle = n.selected ? p.ink : p.ink2;
+      ctx.font = `${isKey ? 12 : 10.5}px ${SANS}`;
+      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel;
+      ctx.fillStyle = p.ink2;
 
       // 标签压在星体上会互相干扰,统一挪到星体下方
-      ctx.fillText(text, c.x, c.y + r + 13 + focus * 2);
+      ctx.fillText(text, c.x, c.y + r + 13);
+    }
+  }
+
+  /**
+   * 选中星体的标题 —— **单独画,任何缩放层级都出现**。
+   *
+   * 这里原来有个实打实的缺陷:标题画在"论文层"的分支里,
+   * 而默认视角落在"前沿层",于是点开一颗星后能看到光晕和环、
+   * 却看不到它的标题 —— 用户反馈的"标题没有动效"其实是"标题压根没画"。
+   *
+   * 而且选中是**用户主动做的动作**,它的反馈不该受当前缩放层级限制:
+   * 你点了一颗星,就应该看到它的名字。普通论文的标签随层级浮动是对的,
+   * 但是选中项必须始终在场。
+   */
+  if (anim.focusId && anim.focus > 0.02) {
+    const idx = scene.nodes.findIndex((n) => n.id === anim.focusId);
+    const node = idx >= 0 ? scene.nodes[idx] : undefined;
+    const x = idx >= 0 ? fx[idx] : undefined;
+    const y = idx >= 0 ? fy[idx] : undefined;
+
+    if (node && x !== undefined && y !== undefined) {
+      const ease = 1 - (1 - anim.focus) * (1 - anim.focus);
+      // 缩放动效:从 0.8 涨到 1 —— 比改字号更像"浮现",而不是"字变大了"
+      const scaleIn = 0.8 + 0.2 * ease;
+      const r = Math.max(2.5, Math.min(9, node.r));
+      const text = truncate(node.label, 60);
+
+      ctx.globalAlpha = Math.min(1, anim.focus * 1.4) * a.paperLabel * 0.98;
+      ctx.font = `500 ${(15 * scaleIn).toFixed(1)}px ${SANS}`;
+      ctx.fillStyle = p.ink;
+      ctx.strokeStyle = hexA(p.bg, 0.7);
+      ctx.lineWidth = 3;
+      ctx.strokeText(text, x, y + r + 16 * scaleIn);
+      ctx.fillText(text, x, y + r + 16 * scaleIn);
+      ctx.globalAlpha = 1;
     }
   }
 

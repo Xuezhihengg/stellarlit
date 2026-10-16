@@ -90,6 +90,15 @@ export interface SceneEdge {
   a: number;
   b: number;
   directed: boolean;
+  /**
+   * 原始的引用方向,存的是 Scene.nodes 的下标。
+   *
+   * `a`/`b` 为了去重被规范化成"小下标在前",方向信息就丢了。
+   * 而引用是**有向**的,画面上必须能看出"谁引用了谁" ——
+   * 所以方向单独留一份,不跟去重用的下标混在一起。
+   */
+  from: number;
+  to: number;
   weight: number;
   confidence: number;
   tone: EdgeToneKey;
@@ -98,7 +107,13 @@ export interface SceneEdge {
   active: boolean;
   /** 所属关系类型被关掉:淡出,但保留在画面上 */
   faded: boolean;
-  /** 关系类型的中文名,画在边旁边 */
+  /**
+   * 写在边旁边的文字 —— **只含语义关系**。
+   *
+   * 引用和语义可能落在同一对论文之间而被合并成一条边。
+   * 合并时若把"引用"也写进标签,就等于又回到"用文字表示引用"的老路,
+   * 而引用方向现在是由流动的粒子表达的。
+   */
   label: string;
   /**
    * 这一对论文之间**全部**关系的类型名。
@@ -427,6 +442,8 @@ export function buildScene(
       layer,
       a: Math.min(a, b),
       b: Math.max(a, b),
+      from: a,
+      to: b,
       directed: e.directed,
       weight: e.weight,
       confidence: e.confidence,
@@ -434,7 +451,7 @@ export function buildScene(
       dash: SOLID,
       active: activeIds.size > 0 && (activeIds.has(e.source) || activeIds.has(e.target)),
       faded: Boolean(dimmedKinds?.has(e.kind)),
-      label: EDGE_LABEL[e.kind] ?? e.kind,
+      label: layer === "semantic" ? (EDGE_LABEL[e.kind] ?? e.kind) : "",
       kinds: [EDGE_LABEL[e.kind] ?? e.kind],
     };
 
@@ -451,10 +468,14 @@ export function buildScene(
 
     const mergedKinds = [...new Set([...prev.kinds, ...candidate.kinds])];
     const winner = preferNew ? candidate : prev;
+    // 标签只保留语义关系;引用交给粒子去表达
+    const semanticLabels = [
+      ...new Set([prev.label, candidate.label].filter((x) => x.length > 0)),
+    ];
     byPair.set(key, {
       ...winner,
       kinds: mergedKinds,
-      label: mergedKinds.join(" · "),
+      label: semanticLabels.join(" · "),
       // 只要有一个关系没被关掉,这条边就仍然算"可见"
       faded: prev.faded && candidate.faded,
       active: prev.active || candidate.active,

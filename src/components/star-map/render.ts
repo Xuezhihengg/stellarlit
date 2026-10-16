@@ -674,7 +674,14 @@ function drawCitationParticles(
    * kind 变成语义类型,引用那条被"吃掉"了 —— 用 kind 筛会把它们全漏掉。
    * 那些边是亮着的,所以它们的引用方向理应看得见。
    */
-  const links = scene.edges.filter((e) => e.hasCitation && !e.faded);
+  /**
+   * 不按 faded 排除,交给透明度去淡。
+   *
+   * 之前直接把被关掉的边滤掉,于是开关引用时粒子是**瞬间**消失的 ——
+   * 而线是渐渐淡下去的,两者对不上。现在一律画出来,
+   * 亮度跟着边自己的淡出进度走,开关就变成了同一段过渡。
+   */
+  const links = scene.edges.filter((e) => e.hasCitation);
   if (!links.length) return;
 
   ctx.save();
@@ -689,6 +696,16 @@ function drawCitationParticles(
      */
     const focused = focusIndex >= 0 && (e.a === focusIndex || e.b === focusIndex);
     const boost = focused ? 1.75 : 1;
+
+    /**
+     * 引用边本身是暗的(它是骨架),它上面的粒子也该是暗的,而且不带光晕。
+     *
+     * 否则会出现一个很别扭的对比:线只比背景亮一点点,粒子却拖着一圈亮光 ——
+     * 观感上像是"光晕浮在图上",而不是"线上有个东西在跑"。
+     * 只有语义边(亮线)才配得上光晕:光晕是"这条边重要"的表达。
+     */
+    const bright = e.layer === "semantic";
+    const weight = bright ? 1 : 0.38;
     const ax = fx[e.a];
     const ay = fy[e.a];
     const bx = fx[e.b];
@@ -708,8 +725,17 @@ function drawCitationParticles(
     const citeFrom = e.citationFrom ?? e.from;
     // 贝塞尔是按 a→b 参数化的,引用方向若是 b→a 就把参数反过来
     const forward = citeFrom === e.a;
-    // 长边跑得快一点,视觉速度才一致
-    const speed = 0.34 / Math.max(0.4, Math.min(2.2, len / 220));
+    /**
+     * 速度按**世界坐标**下的边长算,不按屏幕像素。
+     *
+     * 原来用屏幕长度,于是缩放一变、每条边的"长度"跟着变,
+     * 粒子的快慢也就跟着变 —— 同一颗星在放大缩小时像换了个节奏。
+     * 世界长度只跟图的形状有关,与相机无关,缩放时节奏才是稳定的。
+     */
+    const na = scene.nodes[e.a];
+    const nb = scene.nodes[e.b];
+    const worldLen = na && nb ? Math.hypot(na.x - nb.x, na.y - nb.y) : 200;
+    const speed = 0.34 / Math.max(0.4, Math.min(2.2, worldLen / 220));
     const phase = seed;
 
     // 与线共用透明度:线在淡入淡出时,粒子跟着一起
@@ -726,22 +752,24 @@ function drawCitationParticles(
 
       // 两端渐隐:粒子从引用者身上"生成",到被引用者身上"汇入"
       const fade = Math.min(1, Math.min(u, 1 - u) / 0.14);
-      const strength = Math.min(1, fade * edgeFade * boost);
+      const strength = Math.min(1, fade * edgeFade * boost * weight);
       if (strength < 0.02) continue;
 
-      const r = (1.5 + 0.55 * fade) * (0.9 + 0.35 * boost);
+      const r = (1.5 + 0.55 * fade) * (0.9 + 0.35 * boost) * (bright ? 1 : 0.82);
 
-      const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3.6);
-      g.addColorStop(0, hexA(p.accent, Math.min(1, 0.85 * strength)));
-      g.addColorStop(0.4, hexA(p.accent, Math.min(1, 0.24 * strength)));
-      g.addColorStop(1, "rgba(0,0,0,0)");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(px, py, r * 3.6, 0, Math.PI * 2);
-      ctx.fill();
+      if (bright) {
+        const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3.6);
+        g.addColorStop(0, hexA(p.accent, Math.min(1, 0.85 * strength)));
+        g.addColorStop(0.4, hexA(p.accent, Math.min(1, 0.24 * strength)));
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(px, py, r * 3.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
 
-      ctx.globalAlpha = Math.min(1, 0.95 * strength);
-      ctx.fillStyle = p.ink;
+      ctx.globalAlpha = Math.min(1, (bright ? 0.95 : 0.7) * strength);
+      ctx.fillStyle = bright ? p.ink : p.ink2;
       ctx.beginPath();
       ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
       ctx.fill();

@@ -58,8 +58,10 @@ export function stepAnim(
     anim.nodeAlpha.set(n.id, approach(anim.nodeAlpha.get(n.id) ?? 1, target, dt, 7));
   }
   for (const e of scene.edges) {
-    const target = e.faded ? 0.1 : 1;
-    anim.edgeAlpha.set(e.id, approach(anim.edgeAlpha.get(e.id) ?? 1, target, dt, 7));
+    // 被关掉的边留 12% 而不是归零:让"这里曾经有线"仍然可辨,
+    // 也让重新打开时有一个明确的起点
+    const target = e.faded ? 0.12 : 1;
+    anim.edgeAlpha.set(e.id, approach(anim.edgeAlpha.get(e.id) ?? 1, target, dt, 6));
   }
 
   /**
@@ -389,7 +391,8 @@ function drawEdges(
       淡入淡出时整桶一起变化,足够顺滑。
       被关掉的关系淡到几乎只剩痕迹 —— 要能看出"这里原来有线",但不该再抢注意力。
     */
-    ctx.globalAlpha = base * alpha * (bucket.faded ? 0.12 : 1) * bucket.minAlpha;
+    // 淡出已经包含在 bucket.minAlpha 里,不再叠一个瞬时系数
+    ctx.globalAlpha = base * alpha * bucket.minAlpha;
     ctx.lineWidth = bucket.active ? 1.2 : semantic ? 1 : 0.6;
 
     // 语义边让虚线缓缓流动:线是"活的",静态的虚线看起来只是样式
@@ -671,7 +674,14 @@ function edgeLuminance(
   const focused = focusIndex >= 0 && (e.a === focusIndex || e.b === focusIndex);
   const f = Math.max(0, Math.min(1, anim.focus));
   const base = focused ? idle + (lit - idle) * f : idle;
-  return base * (e.faded ? 0.12 : 1) * (anim.edgeAlpha.get(e.id) ?? 1);
+  /**
+   * "被关掉"这件事**只通过逐帧透明度表达**,不在这里再乘一个瞬时系数。
+   *
+   * 之前 0.12 被乘了三次:这里一次、画线时一次、动画目标里一次 ——
+   * 其中两个是瞬时的,于是开关一按,边和粒子直接跳到几乎不可见,
+   * 那个渐变的那个根本来不及起作用,看起来就是"没有动效"。
+   */
+  return base * (anim.edgeAlpha.get(e.id) ?? 1);
 }
 
 function drawCitationParticles(

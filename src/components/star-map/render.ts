@@ -14,6 +14,7 @@
 import { worldToScreen, type Camera } from "@/lib/design/camera";
 import { edgeCurve, edgeSeed, pointOnEdge } from "@/lib/design/edge-curve";
 import { placeLabelBlock, wrapByWidth } from "@/lib/design/label-layout";
+import { smoothstep } from "@/lib/design/motion";
 import { domainTone, domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
 import type { Scene, SceneBlob, SceneEdge } from "@/lib/graph/scene";
 import type { Theme } from "@/hooks/use-theme";
@@ -1010,13 +1011,29 @@ function drawLabels(
       ctx.fillStyle = p.ink;
 
       const shortText = truncate(n.label, 30);
+      /**
+       * 重点态的一行版:种子论文常驻在图上,一占三行就把邻居压住了,
+       * 所以它保持一行、只把截断放宽;真正展开成完整标题是在**选中**之后。
+       */
+      const keyText = truncate(n.label, 52);
       const alphaBase = (0.4 + 0.55 * keyLevel) * a.paperLabel;
       // 标签压在星体上会互相干扰,统一挪到星体下方
       const labelY = c.y + r + 13;
 
-      // 短版:常态的一行标签,选中时淡出
-      if (keyLevel < 0.99) {
-        ctx.globalAlpha = alphaBase * (1 - keyLevel);
+      /**
+       * 两段文字的出手顺序:旧的先退,新的后进。
+       *
+       * 文字不是图形 —— 两串字叠在一起时,眼睛看到的是**重影**,不是"溶解"。
+       * 所以这里刻意让它们错开:旧版在 keyLevel 到 0.5 之前退干净,
+       * 新版从 0.1 才开始进。中间那一小段两边都淡是刻意的 ——
+       * 它把"换了内容"读成一次交接,而不是两层字压在一起。
+       */
+      const exit = 1 - smoothstep(0, 0.5, keyLevel);
+      const enter = smoothstep(0.1, 0.58, keyLevel);
+
+      // 常态:一行,截断到 30 字。重点态或选中时退场
+      if (exit > 0.01) {
+        ctx.globalAlpha = alphaBase * exit;
         ctx.fillText(shortText, c.x, labelY);
       }
 
@@ -1034,8 +1051,13 @@ function drawLabels(
        * 也不画底衬:多行文字压在星空上仍然读得清,而一块矩形底衬会把它
        * 变成"浮动卡片",跟四周无底衬的标签不是一套语言。
        */
-      if (keyLevel > 0.01 && isFocus) {
-        drawFocusTitle(ctx, n.label, c.x, labelY, width, height, alphaBase * keyLevel, p.ink);
+      if (enter > 0.01) {
+        if (isFocus) {
+          drawFocusTitle(ctx, n.label, c.x, labelY, width, height, alphaBase, keyLevel, p.ink);
+        } else {
+          ctx.globalAlpha = alphaBase * enter;
+          ctx.fillText(keyText, c.x, labelY);
+        }
       }
     }
   }
@@ -1132,6 +1154,11 @@ const FOCUS_TITLE = {
  *   - 首行落在短版标签原来那一行上,所以交叉淡入看起来是"从这一行往下长出来";
  *   - 星体贴着视口边缘时,把整块文字平移进来(位移只跟星体位置有关,
  *     与动画进度无关,因此不会在动画中途跳一下)。
+ *
+ * 出场规则:一行一行地落,不是整块一起浮出来 —— 第一行先出现在原位,
+ * 后面的行依次跟上。三行同时淡入会读成"一块新的东西盖上来",
+ * 依次淡入才读成"这句话展开了"。每行的曲线都从 `reveal` 派生,
+ * 与第二行、第三行是否已经出现无关。
  */
 function drawFocusTitle(
   ctx: CanvasRenderingContext2D,
@@ -1141,6 +1168,7 @@ function drawFocusTitle(
   viewW: number,
   viewH: number,
   alpha: number,
+  reveal: number,
   color: string,
 ): void {
   ctx.font = `${FOCUS_TITLE.px}px ${SANS}`;
@@ -1160,7 +1188,11 @@ function drawFocusTitle(
   ctx.fillStyle = color;
   lines.forEach((line, i) => {
     const at = block.positions[i];
-    if (at) ctx.fillText(line, at.x, at.y);
+    if (!at) return;
+    const shown = smoothstep(0.1 + 0.12 * i, 0.58 + 0.12 * i, reveal);
+    if (shown <= 0.01) return;
+    ctx.globalAlpha = alpha * shown;
+    ctx.fillText(line, at.x, at.y);
   });
 }
 

@@ -695,17 +695,27 @@ function drawCitationParticles(
      * 但只是"更醒目",不是"换一套视觉",所以仍是同一套参数乘以一个系数。
      */
     const focused = focusIndex >= 0 && (e.a === focusIndex || e.b === focusIndex);
-    const boost = focused ? 1.75 : 1;
 
     /**
-     * 引用边本身是暗的(它是骨架),它上面的粒子也该是暗的,而且不带光晕。
+     * 粒子的亮度与光晕,跟着**这条边当前的明暗**走 —— 而不是跟着它的类型走。
      *
-     * 否则会出现一个很别扭的对比:线只比背景亮一点点,粒子却拖着一圈亮光 ——
-     * 观感上像是"光晕浮在图上",而不是"线上有个东西在跑"。
-     * 只有语义边(亮线)才配得上光晕:光晕是"这条边重要"的表达。
+     * 这里踩过一个坑:一度按 `e.layer === "semantic"` 判断要不要光晕。
+     * 但"亮"与"是语义边"不是一回事:引用边在没被选中时是暗的,
+     * 一旦与选中的星相连,它会被提亮到接近语义边的程度 ——
+     * 那时它明明亮着,却因为 layer 是 structural 而没有光晕。
+     *
+     * 现在按亮度算:亮度 = 该类型在"静"与"亮"两档之间按焦点插值,
+     * 与 drawEdges 里用的是同一个公式。于是光晕强度天然跟着焦点动画走,
+     * 点击时渐显、取消时渐隐,不需要额外写一套过渡。
      */
-    const bright = e.layer === "semantic";
-    const weight = bright ? 1 : 0.38;
+    const idleLum = e.layer === "semantic" ? 0.46 : 0.14;
+    const litLum = e.layer === "semantic" ? 0.78 : 0.45;
+    const lum = focused ? idleLum + (litLum - idleLum) * anim.focus : idleLum;
+    // 0 = 暗到不该有光晕;1 = 完全点亮
+    const glow = Math.max(0, Math.min(1, (lum - 0.18) / 0.35));
+
+    const boost = focused ? 1.4 : 1;
+    const weight = 0.34 + 0.66 * glow;
     const ax = fx[e.a];
     const ay = fy[e.a];
     const bx = fx[e.b];
@@ -735,7 +745,8 @@ function drawCitationParticles(
     const na = scene.nodes[e.a];
     const nb = scene.nodes[e.b];
     const worldLen = na && nb ? Math.hypot(na.x - nb.x, na.y - nb.y) : 200;
-    const speed = 0.34 / Math.max(0.4, Math.min(2.2, worldLen / 220));
+    // 整体放缓:方向是提示,不是动画片
+    const speed = 0.2 / Math.max(0.4, Math.min(2.2, worldLen / 220));
     const phase = seed;
 
     // 与线共用透明度:线在淡入淡出时,粒子跟着一起
@@ -755,12 +766,14 @@ function drawCitationParticles(
       const strength = Math.min(1, fade * edgeFade * boost * weight);
       if (strength < 0.02) continue;
 
-      const r = (1.5 + 0.55 * fade) * (0.9 + 0.35 * boost) * (bright ? 1 : 0.82);
+      const r = (1.4 + 0.5 * fade) * (0.85 + 0.3 * boost) * (0.84 + 0.3 * glow);
 
-      if (bright) {
+      // 光晕强度与它出现的时机都由 glow 控制:暗边没有,亮边有,
+      // 点击时随焦点渐显 —— 这正是"光晕的出现与消失也带动效"
+      if (glow > 0.02) {
         const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3.6);
-        g.addColorStop(0, hexA(p.accent, Math.min(1, 0.85 * strength)));
-        g.addColorStop(0.4, hexA(p.accent, Math.min(1, 0.24 * strength)));
+        g.addColorStop(0, hexA(p.accent, Math.min(1, 0.9 * strength * glow)));
+        g.addColorStop(0.4, hexA(p.accent, Math.min(1, 0.26 * strength * glow)));
         g.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = g;
         ctx.beginPath();
@@ -768,8 +781,8 @@ function drawCitationParticles(
         ctx.fill();
       }
 
-      ctx.globalAlpha = Math.min(1, (bright ? 0.95 : 0.7) * strength);
-      ctx.fillStyle = bright ? p.ink : p.ink2;
+      ctx.globalAlpha = Math.min(1, (0.62 + 0.33 * glow) * strength);
+      ctx.fillStyle = glow > 0.5 ? p.ink : p.ink2;
       ctx.beginPath();
       ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
       ctx.fill();

@@ -34,83 +34,56 @@ export function BottomBar({
 
   return (
     <div
-      className="pointer-events-none fixed bottom-0 left-0 z-30 pb-7 pl-9"
+      className="pointer-events-none fixed bottom-0 left-0 z-30 pb-8 pl-10"
       style={{ right: rightInset, transition: "right var(--dur-base) var(--ease-out)" }}
     >
       <div className="flex items-end justify-between gap-8">
         {/* ---------- 时间轴 ---------- */}
-        <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-hair-2 bg-bg/65 px-3 py-2 backdrop-blur-md">
-          {ticks.length ? (
-            <>
-              <button
-                type="button"
-                onClick={() => onMinYearChange(null)}
-                title="显示全部年份"
-                aria-pressed={minYear === null}
-                className={`grid h-6 w-6 shrink-0 place-items-center rounded-full transition-colors duration-[--dur-fast] ${
-                  minYear === null
-                    ? "text-ink-4 hover:bg-hair hover:text-ink-3"
-                    : "bg-accent/12 text-accent"
-                }`}
-              >
-                <svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
-                  <path d="M1 1.2 L4.2 4.5 L1 7.8 Z" fill="currentColor" />
-                  <path d="M4.6 1.2 L7.8 4.5 L4.6 7.8 Z" fill="currentColor" opacity="0.5" />
-                </svg>
-              </button>
+        {/*
+          极简轴线。
 
-              {/*
-                时间轴画成"一条带刻度的轨道",而不是一排等宽按钮。
-                轨道有起点和终点,按钮没有 —— 而这条轨道回答的正是
-                「这个领域这些年是怎么变的」。
-                选中的那一段轨道会亮起来,让"正在看哪一段"是位置信息而不是文字信息。
-              */}
-              <div className="relative flex items-center">
-                <span className="pointer-events-none absolute inset-x-[7px] top-[11px] h-px bg-hair-2" />
-                {minYear !== null ? (
-                  <span
-                    className="pointer-events-none absolute top-[11px] h-px bg-accent/70"
-                    style={{
-                      left: 7 + (ticks.findIndex((y) => y >= minYear) / Math.max(1, ticks.length)) * 100 + "%",
-                      right: 7,
-                    }}
-                  />
-                ) : null}
+          上一版的问题不是颜色或间距,而是**信息密度与层次错了**:
+          15 个刻度、每个配一个圆点、再装进一个带边框的圆角盒子 ——
+          每个元素都在争同样的注意力,读起来像控制面板。
 
-                {ticks.map((y) => {
-                  const active = minYear !== null && y >= minYear;
-                  return (
-                    <button
-                      key={y}
-                      type="button"
-                      onClick={() => onMinYearChange(minYear === y ? null : y)}
-                      aria-pressed={minYear === y}
-                      className="group relative flex w-[46px] flex-col items-center pt-[6px] pb-0.5"
-                    >
-                      <span
-                        className={`h-[7px] w-[7px] rounded-full border transition-all duration-[--dur-fast] ${
-                          active
-                            ? "border-accent bg-accent"
-                            : "border-ink-4 bg-bg group-hover:border-ink-3 group-hover:bg-ink-4"
-                        }`}
-                      />
-                      <span
-                        className={`mt-1.5 font-mono text-[10px] transition-colors duration-[--dur-fast] ${
-                          active ? "text-accent" : "text-ink-4 group-hover:text-ink-3"
-                        }`}
-                      >
-                        {y}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </>
-          ) : (
-            <p className="px-2 text-[10.5px] tracking-[0.08em] text-ink-4">
-              输入一篇种子论文,星空会沿着它的研究脉络长出来
-            </p>
-          )}
+          这一版只留三样东西:一条轴线、稀疏的刻度、克制的年份。
+          盒子去掉了(靠一层几乎看不见的径向压暗保证星图上可读),
+          圆点改成短竖线,年份按跨度自动稀疏到不超过 6 个。
+          「正在看哪一段」由轴线本身的明暗表达 —— 位置信息,不是文字信息。
+
+          刻度间距固定 52px,所以轴线与高亮段都用**像素**算,
+          不用百分比 —— 百分比会在刻度数变化时对不齐。
+        */}
+        <div className="pointer-events-auto relative">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute -inset-x-12 -inset-y-9 -z-10"
+            style={{
+              background:
+                "radial-gradient(72% 120% at 20% 55%, var(--bg) 0%, var(--bg) 30%, transparent 100%)",
+            }}
+          />
+
+          <div className="flex items-end gap-7">
+            <button
+              type="button"
+              onClick={() => onMinYearChange(null)}
+              aria-pressed={minYear === null}
+              className={`pb-[7px] text-[10.5px] tracking-[0.16em] transition-colors duration-[--dur-fast] ${
+                minYear === null ? "text-ink-3 hover:text-ink-2" : "text-accent/80 hover:text-accent"
+              }`}
+            >
+              全部
+            </button>
+
+            {ticks.length ? (
+              <Timeline ticks={ticks} minYear={minYear} onPick={onMinYearChange} />
+            ) : (
+              <p className="pb-[7px] text-[10.5px] tracking-[0.08em] text-ink-4">
+                输入种子论文,星空会沿着它的研究脉络长出来
+              </p>
+            )}
+          </div>
         </div>
 
         {/* ---------- 图例 = 筛选器 ---------- */}
@@ -120,12 +93,98 @@ export function BottomBar({
   );
 }
 
+/** 刻度间距(px)。轴线与高亮段都按它算,保证任何刻度数下都对齐。 */
+const TICK_W = 52;
+const TRACK_INSET = TICK_W / 2;
+
+/**
+ * 一条轴线 + 一串刻度。
+ *
+ * 轴线的静段几乎看不见,亮段才是"当前范围" —— 这样"在看哪一段"
+ * 是一个位置事实,不需要再配一句说明文字。
+ */
+function Timeline({
+  ticks,
+  minYear,
+  onPick,
+}: {
+  ticks: number[];
+  minYear: number | null;
+  onPick: (year: number | null) => void;
+}) {
+  const firstActive = minYear === null ? -1 : ticks.findIndex((y) => y >= minYear);
+  const lastIndex = ticks.length - 1;
+
+  return (
+    <div className="relative" style={{ width: ticks.length * TICK_W }}>
+      <span
+        className="pointer-events-none absolute top-0 h-px bg-hair-2"
+        style={{
+          left: TRACK_INSET,
+          right: TRACK_INSET,
+          // 两端渐隐:硬边的轴线像一条边框,渐隐的才像"时间在延伸"
+          maskImage: "linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent)",
+        }}
+      />
+      {firstActive >= 0 ? (
+        <span
+          className="pointer-events-none absolute top-0 h-px bg-accent/55"
+          style={{
+            left: TRACK_INSET + firstActive * TICK_W,
+            width: (lastIndex - firstActive) * TICK_W,
+            boxShadow: "0 0 7px color-mix(in srgb, var(--accent) 45%, transparent)",
+          }}
+        />
+      ) : null}
+
+      <div className="flex items-start">
+        {ticks.map((y, i) => {
+          const active = firstActive >= 0 && i >= firstActive;
+          return (
+            <button
+              key={y}
+              type="button"
+              onClick={() => onPick(minYear === y ? null : y)}
+              aria-pressed={minYear === y}
+              title={`只看 ${y} 年及以后`}
+              className="group flex flex-col items-center"
+              style={{ width: TICK_W }}
+            >
+              {/* 刻度从轴线上垂下来 */}
+              <span
+                className={`w-px transition-all duration-[--dur-fast] ${
+                  active
+                    ? "h-[9px] bg-accent"
+                    : "h-[6px] bg-ink-4 group-hover:h-[9px] group-hover:bg-ink-3"
+                }`}
+              />
+              <span
+                className={`mt-[7px] font-mono text-[10.5px] tracking-[0.04em] transition-colors duration-[--dur-fast] ${
+                  active ? "text-accent" : "text-ink-3 group-hover:text-ink-2"
+                }`}
+              >
+                {y}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 刻度稀疏化。
+ *
+ * 目标不是"把年份都标出来",而是**一眼看出跨度**。
+ * 一个 15 年的区间标 15 个年份,读到的是噪声;标 5 个,读到的才是趋势。
+ * 所以步长按跨度自动选,并把刻度数压在 6 个以内。
+ */
 function buildTicks(min: number, max: number): number[] {
-  const span = max - min;
-  const step = span <= 8 ? 1 : span <= 20 ? 2 : 5;
+  const span = Math.max(0, max - min);
+  const step = [1, 2, 3, 5, 10].find((s) => span / s <= 6) ?? 10;
   const start = Math.ceil(min / step) * step;
   const out: number[] = [];
   for (let y = start; y <= max; y += step) out.push(y);
-  // 年份太多时只保留偶数年,否则刻度会挤成一片
-  return out.length > 14 ? out.filter((_, i) => i % 2 === 0) : out;
+  return out.length ? out : [max];
 }

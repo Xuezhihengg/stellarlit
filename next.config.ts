@@ -10,6 +10,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
+  // 开发工具标记固定在左下角,会挡住时间轴。它对开发没帮助到值得牺牲一片视野。
+  devIndicators: false,
   experimental: {
     optimizePackageImports: ["zustand"],
   },

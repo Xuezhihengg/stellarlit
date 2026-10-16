@@ -9,6 +9,8 @@ interface TopBarProps {
   meta?: string;
   /** 右:统计与主题切换等。 */
   right?: ReactNode;
+  /** 被侧栏遮住的宽度:顶栏右侧内容要让开它,否则会被压在侧栏底下。 */
+  rightInset?: number;
 }
 
 /**
@@ -17,9 +19,12 @@ interface TopBarProps {
  * 刻意不做导航菜单 —— 一个应用的导航如果是"首页/收藏/设置"，
  * 说明它的核心不是这张图。设置与历史收进右侧的状态区。
  */
-export function TopBar({ brand, title, meta, right }: TopBarProps) {
+export function TopBar({ brand, title, meta, right, rightInset = 0 }: TopBarProps) {
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-0 z-30 flex items-start justify-between gap-6 px-9 py-7">
+    <header
+      className="pointer-events-none fixed top-0 left-0 z-30 flex items-start justify-between gap-6 py-7 pl-9"
+      style={{ right: rightInset, transition: "right var(--dur-base) var(--ease-out)" }}
+    >
       <div className="pointer-events-auto min-w-[180px]">{brand}</div>
 
       {title ? (

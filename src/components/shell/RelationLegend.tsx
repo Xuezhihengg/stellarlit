@@ -1,0 +1,75 @@
+"use client";
+
+import type { StarfieldPayload } from "@/types/api";
+
+interface RelationLegendProps {
+  payload: StarfieldPayload;
+  hiddenKinds: Set<string>;
+  onToggle: (kind: string) => void;
+}
+
+/** 边 kind → 关系预设 id,用于把统计数字挂回图例。 */
+const KIND_TO_PRESET: Record<string, string> = {
+  BASELINE_OF: "baseline",
+  CONTEMPORARY_OF: "contemporary",
+  SIMILAR_APPROACH: "similar",
+  ALTERNATIVE_TO: "alternative",
+  EXTENDS: "extends",
+  CONTRADICTS: "contradicts",
+};
+
+/**
+ * 关系图例,同时兼任筛选器。
+ *
+ * 图例与筛选合并成同一个控件,是因为它们回答的是同一个问题:
+ * 「这条线是什么意思」。点一下就能把它关掉,比先看说明再去找筛选菜单快得多。
+ */
+export function RelationLegend({ payload, hiddenKinds, onToggle }: RelationLegendProps) {
+  const counts = new Map<string, number>();
+  for (const e of payload.graph.edges) {
+    if (e.layer !== "semantic") continue;
+    counts.set(e.kind, (counts.get(e.kind) ?? 0) + 1);
+  }
+
+  const presets = payload.presets.filter((p) => p.enabled);
+  if (!presets.length) return null;
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      {presets.map((p) => {
+        const kind = Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "";
+        const n = counts.get(kind) ?? 0;
+        const off = hiddenKinds.has(kind);
+
+        return (
+          <button
+            key={p.id}
+            type="button"
+            onClick={() => onToggle(kind)}
+            title={p.description}
+            className={`group flex items-center gap-1.5 transition-opacity duration-[--dur-fast] ${
+              off ? "opacity-30" : "opacity-100"
+            }`}
+          >
+            <span
+              className="h-px w-4"
+              style={{
+                backgroundColor: p.visual.tone,
+                ...(p.visual.dash && p.visual.dash !== "none"
+                  ? {
+                      backgroundImage: `repeating-linear-gradient(90deg, ${p.visual.tone} 0 2px, transparent 2px 6px)`,
+                      backgroundColor: "transparent",
+                    }
+                  : {}),
+              }}
+            />
+            <span className="text-[10.5px] text-ink-3 transition-colors group-hover:text-ink-2">
+              {p.label}
+            </span>
+            <span className="font-mono text-[10px] text-ink-4">{n}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}

@@ -35,7 +35,7 @@ export function RelationLegend({ payload, hiddenKinds, onToggle }: RelationLegen
   if (!presets.length) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       {presets.map((p) => {
         const kind = Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "";
         const n = counts.get(kind) ?? 0;
@@ -47,12 +47,12 @@ export function RelationLegend({ payload, hiddenKinds, onToggle }: RelationLegen
             type="button"
             onClick={() => onToggle(kind)}
             title={p.description}
-            className={`group flex items-center gap-1.5 transition-opacity duration-[--dur-fast] ${
-              off ? "opacity-30" : "opacity-100"
+            className={`group flex items-center gap-2 rounded-full border border-transparent px-2.5 py-[5px] transition-all duration-[--dur-fast] hover:border-hair-2 hover:bg-hair/40 ${
+              off ? "opacity-35" : "opacity-100"
             }`}
           >
             <span
-              className="h-px w-4"
+              className="h-px w-4 shrink-0"
               style={{
                 backgroundColor: p.visual.tone,
                 ...(p.visual.dash && p.visual.dash !== "none"
@@ -63,10 +63,10 @@ export function RelationLegend({ payload, hiddenKinds, onToggle }: RelationLegen
                   : {}),
               }}
             />
-            <span className="text-[10.5px] text-ink-3 transition-colors group-hover:text-ink-2">
+            <span className="text-[10.5px] tracking-[0.02em] text-ink-3 transition-colors group-hover:text-ink-2">
               {p.label}
             </span>
-            <span className="font-mono text-[10px] text-ink-4">{n}</span>
+            <span className="font-mono text-[9.5px] text-ink-4">{n}</span>
           </button>
         );
       })}

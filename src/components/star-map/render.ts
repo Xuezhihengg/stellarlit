@@ -12,7 +12,7 @@
  */
 
 import { worldToScreen, type Camera } from "@/lib/design/camera";
-import { domainTone, PALETTES, type CanvasPalette } from "@/lib/design/palette";
+import { domainTone, domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
 import type { Scene, SceneBlob } from "@/lib/graph/scene";
 import type { Theme } from "@/hooks/use-theme";
 import type { ViewLevel } from "@/types/starfield";
@@ -27,6 +27,8 @@ export interface RenderInput {
   level: ViewLevel;
   /** 用于呼吸与漂浮的时间(秒)。传 0 可得到完全静止的一帧,截图用。 */
   time: number;
+  /** 归一化指针位置(-0.5~0.5),用于视差。让"近"的星跟着手移动,画面才有纵深。 */
+  pointer?: { x: number; y: number };
 }
 
 /**
@@ -42,19 +44,44 @@ function levelAlpha(level: ViewLevel) {
     case "community":
       return { nebula: 0.62, blob: 1, edge: 0.55, node: 0.62, paperLabel: 0.12, communityLabel: 1, domainLabel: 0.35 };
     default:
-      return { nebula: 0.22, blob: 0.4, edge: 1, node: 1, paperLabel: 1, communityLabel: 0.5, domainLabel: 0.12 };
+      return { nebula: 0.22, blob: 0.4, edge: 1, node: 1, paperLabel: 1, communityLabel: 0.5, domainLabel: 0.05 };
   }
 }
 
 const toneOf = (key: string, p: CanvasPalette): string =>
   (p as unknown as Record<string, string>)[key] ?? p.ink3;
 
+/** 视差强度(屏幕像素)。数值小是刻意的:星图是数据,不能跟着鼠标乱晃。 */
+const PARALLAX = 12;
+
 export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): void {
   const { scene, camera, width, height, theme, level, time } = input;
+  const pointer = input.pointer ?? { x: 0, y: 0 };
   const p = PALETTES[theme];
   const a = levelAlpha(level);
 
   ctx.clearRect(0, 0, width, height);
+
+  /**
+   * 先算一次"漂浮之后"的屏幕坐标,星体和连线共用这一份。
+   *
+   * 这是全场最容易被写错的地方:如果星体加了漂浮而连线仍然连静止坐标,
+   * 线就会慢慢从星上滑开,越飘越明显。共用一份坐标是唯一稳的做法。
+   */
+  const fx = new Float64Array(scene.nodes.length);
+  const fy = new Float64Array(scene.nodes.length);
+  for (let i = 0; i < scene.nodes.length; i++) {
+    const n = scene.nodes[i];
+    if (!n) continue;
+    const m = n.motion;
+    const c = worldToScreen(camera, width, height, {
+      x: n.x + Math.cos(time * m.spd + m.phx) * m.amp,
+      y: n.y + Math.sin(time * m.spd * 1.13 + m.phy) * m.amp,
+    });
+    // 越"近"的星跟着指针动得越多 → 平面图有了纵深
+    fx[i] = c.x - pointer.x * PARALLAX * m.dp;
+    fy[i] = c.y - pointer.y * PARALLAX * m.dp;
+  }
 
   // ---------- 1. 星云底光 ----------
   if (a.nebula > 0.01) drawNebulae(ctx, scene, camera, width, height, theme, a.nebula, time);
@@ -67,13 +94,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 3. 边 ----------
-  if (a.edge > 0.01) drawEdges(ctx, scene, camera, width, height, p, a.edge, level);
+  if (a.edge > 0.01) drawEdges(ctx, scene, width, height, p, a.edge, level, fx, fy);
 
   // ---------- 4. 星体 ----------
-  if (a.node > 0.01) drawNodes(ctx, scene, camera, width, height, p, a.node, time);
+  if (a.node > 0.01) drawNodes(ctx, scene, width, height, p, a.node, time, fx, fy, camera.scale);
 
   // ---------- 5. 标签 ----------
-  drawLabels(ctx, scene, camera, width, height, p, a, level);
+  drawLabels(ctx, scene, camera, width, height, p, a, level, fx, fy);
 }
 
 // ---------------------------------------------------------------------------
@@ -94,26 +121,30 @@ function drawNebulae(
   ctx.globalCompositeOperation = theme === "dark" ? "lighter" : "source-over";
 
   for (const d of scene.domains) {
-    const c = worldToScreen(camera, width, height, { x: d.x, y: d.y });
-    const r = d.r * camera.scale;
-    if (r < 18) continue;
-    if (c.x + r < 0 || c.x - r > width || c.y + r < 0 || c.y - r > height) continue;
-
-    // 极缓慢的呼吸:幅度必须小到「几乎察觉不到,但画面是活的」
-    const breathe = 1 + Math.sin(time * 0.22 + d.tone) * 0.012;
-    const radius = r * breathe;
-
-    const g = ctx.createRadialGradient(c.x, c.y, radius * 0.08, c.x, c.y, radius);
+    // 极缓慢的呼吸:幅度小到"几乎察觉不到,但画面是活的"
+    const breathe = 1 + Math.sin(time * 0.2 + d.tone) * 0.014;
     const tone = domainTone(d.tone, theme);
-    g.addColorStop(0, tone);
-    g.addColorStop(0.55, tone.replace(/[\d.]+\)$/, "0.05)"));
-    g.addColorStop(1, "transparent");
+    const core = tone.replace(/[\d.]+\)$/, "0.13)");
+    const rim = tone.replace(/[\d.]+\)$/, "0.05)");
+
+    const parts = d.blobs?.length ? d.blobs : [{ x: d.x, y: d.y, r: d.r }];
 
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(c.x, c.y, radius, 0, Math.PI * 2);
-    ctx.fill();
+    for (const blob of parts) {
+      const c = worldToScreen(camera, width, height, { x: blob.x, y: blob.y });
+      const r = blob.r * camera.scale * breathe;
+      if (r < 12) continue;
+      if (c.x + r < 0 || c.x - r > width || c.y + r < 0 || c.y - r > height) continue;
+
+      const g = ctx.createRadialGradient(c.x, c.y, r * 0.05, c.x, c.y, r);
+      g.addColorStop(0, core);
+      g.addColorStop(0.62, rim);
+      g.addColorStop(1, "transparent");
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 
   ctx.restore();
@@ -158,17 +189,17 @@ function drawBlobs(
 function drawEdges(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
-  camera: Camera,
   width: number,
   height: number,
   p: CanvasPalette,
   alpha: number,
   level: ViewLevel,
+  fx: Float64Array,
+  fy: Float64Array,
 ): void {
   ctx.save();
   ctx.lineCap = "round";
 
-  // 按 (色调, 是否高亮, 层级) 分桶:同一桶只设置一次 strokeStyle
   const buckets = new Map<
     string,
     {
@@ -176,25 +207,24 @@ function drawEdges(
       active: boolean;
       layer: "structural" | "semantic";
       dash: number[] | null;
-      segs: Array<[number, number, number, number]>;
+      segs: number[];
     }
   >();
 
   const margin = 80;
   for (const e of scene.edges) {
-    const na = scene.nodes[e.a];
-    const nb = scene.nodes[e.b];
-    if (!na || !nb) continue;
-
-    const pa = worldToScreen(camera, width, height, na);
-    const pb = worldToScreen(camera, width, height, nb);
+    const ax = fx[e.a];
+    const ay = fy[e.a];
+    const bx = fx[e.b];
+    const by = fy[e.b];
+    if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
 
     // 视口裁剪:两端都在屏幕外同一侧的边直接跳过
     if (
-      (pa.x < -margin && pb.x < -margin) ||
-      (pa.x > width + margin && pb.x > width + margin) ||
-      (pa.y < -margin && pb.y < -margin) ||
-      (pa.y > height + margin && pb.y > height + margin)
+      (ax < -margin && bx < -margin) ||
+      (ax > width + margin && bx > width + margin) ||
+      (ay < -margin && by < -margin) ||
+      (ay > height + margin && by > height + margin)
     ) {
       continue;
     }
@@ -206,7 +236,7 @@ function drawEdges(
       bucket = { tone: e.tone, active: e.active, layer, dash: e.dash, segs: [] };
       buckets.set(key, bucket);
     }
-    bucket.segs.push([pa.x, pa.y, pb.x, pb.y]);
+    bucket.segs.push(ax, ay, bx, by);
   }
 
   for (const bucket of buckets.values()) {
@@ -216,10 +246,10 @@ function drawEdges(
     /**
      * 两层线,两种角色。
      *
-     * 引用边是**骨架**:它数量最多(动辄上千条),画清楚就够了,不能亮,
+     * 引用边是**骨架**:数量最多(动辄上千条),画清楚就够了,不能亮 ——
      * 否则整张图糊成一张灰网,注意力无处安放。
      * 语义边是**结论**:只有几条到几十条,是用户真正要读的东西,
-     * 必须从骨架里浮出来。所以同一层级下它比引用边亮三倍左右。
+     * 必须从骨架里浮出来。
      */
     const semantic = bucket.layer === "semantic";
     const base = bucket.active
@@ -231,16 +261,16 @@ function drawEdges(
           ? 0.46
           : 0.4
         : level === "paper"
-          ? 0.13
-          : 0.17;
+          ? 0.14
+          : 0.18;
 
     ctx.globalAlpha = base * alpha;
     ctx.lineWidth = bucket.active ? 1.2 : semantic ? 1 : 0.6;
 
     ctx.beginPath();
-    for (const [x1, y1, x2, y2] of bucket.segs) {
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
+    for (let i = 0; i < bucket.segs.length; i += 4) {
+      ctx.moveTo(bucket.segs[i] ?? 0, bucket.segs[i + 1] ?? 0);
+      ctx.lineTo(bucket.segs[i + 2] ?? 0, bucket.segs[i + 3] ?? 0);
     }
     ctx.stroke();
   }
@@ -256,45 +286,80 @@ function drawEdges(
 function drawNodes(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
-  camera: Camera,
   width: number,
   height: number,
   p: CanvasPalette,
   alpha: number,
   time: number,
+  fx: Float64Array,
+  fy: Float64Array,
+  scale: number,
 ): void {
   ctx.save();
   ctx.globalCompositeOperation = p.blend;
 
-  // 亮度 = 被引量的对数归一;分 5 桶,每桶一次 fill
+  const themeNow: Theme = p === PALETTES.light ? "light" : "dark";
   const maxLog = Math.log10(Math.max(10, ...scene.nodes.map((n) => n.citations)) + 1);
-  const buckets: Array<{ nodes: Scene["nodes"]; alpha: number; radius: number }> = [];
+
+  /**
+   * 星体分两遍画:先铺光晕,再落星核。
+   *
+   * **光晕是这套视觉的灵魂**。没有它,星图就是一堆白点加线;
+   * 有了它,每颗星才像"在发光",而光的颜色又编码了它所属的前沿 ——
+   * 于是"哪些星是一伙的"不用看标签也能读出来。
+   * 分两遍是因为加色混合下,先画的星核会被后画的邻星光晕提亮,
+   * 顺序不定,亮度也就不稳定。
+   */
+  for (const n of scene.nodes) {
+    if (n.dimmed) continue;
+    const i = scene.nodes.indexOf(n);
+    const x = fx[i];
+    const y = fy[i];
+    if (x === undefined || y === undefined) continue;
+    if (x < -30 || x > width + 30 || y < -30 || y > height + 30) continue;
+
+    const twinkle = 0.86 + 0.14 * Math.sin(time * 1.25 * n.motion.tws + n.motion.tw);
+    const r = Math.max(0.7, Math.min(9, n.r * scale)) * (n.hovered ? 1.5 : 1);
+
+    const haloR = r * (n.hovered || n.selected ? 9 : 5.5);
+    // 光晕用所属前沿的色调:于是"哪些星是一伙的"不用看标签也能读出来
+    const glow = (a: number) => hexA(domainToneBase(n.tone, themeNow), a);
+    const g = ctx.createRadialGradient(x, y, 0, x, y, haloR);
+    g.addColorStop(0, glow((n.hovered ? 0.36 : 0.22) * twinkle));
+    g.addColorStop(0.45, glow(0.07 * twinkle));
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, haloR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.globalCompositeOperation = p.blend;
+  const buckets: Array<{ idx: number[]; a: number; rr: number }> = [];
   const BUCKETS = 5;
   for (let b = 0; b < BUCKETS; b++) {
-    buckets.push({ nodes: [], alpha: 0.16 + (b / (BUCKETS - 1)) * 0.68, radius: 0.85 + (b / (BUCKETS - 1)) * 0.75 });
+    buckets.push({ idx: [], a: 0.2 + (b / (BUCKETS - 1)) * 0.68, rr: 0.85 + (b / (BUCKETS - 1)) * 0.7 });
   }
-
-  for (const n of scene.nodes) {
-    const log = Math.log10(n.citations + 1);
-    const t = Math.max(0, Math.min(1, log / Math.max(1, maxLog)));
-    const b = Math.min(BUCKETS - 1, Math.floor(t * BUCKETS));
-    buckets[b]?.nodes.push(n);
-  }
+  scene.nodes.forEach((n, i) => {
+    if (n.dimmed) return;
+    const t = Math.max(0, Math.min(1, Math.log10(n.citations + 1) / Math.max(1, maxLog)));
+    buckets[Math.min(BUCKETS - 1, Math.floor(t * BUCKETS))]?.idx.push(i);
+  });
 
   for (const bucket of buckets) {
-    if (!bucket.nodes.length) continue;
-    ctx.globalAlpha = alpha * bucket.alpha;
+    if (!bucket.idx.length) continue;
+    ctx.globalAlpha = alpha * bucket.a;
     ctx.fillStyle = p.ink;
     ctx.beginPath();
-    for (const n of bucket.nodes) {
-      if (n.dimmed) continue;
-      const c = worldToScreen(camera, width, height, n);
-      if (c.x < -20 || c.x > width + 20 || c.y < -20 || c.y > height + 20) continue;
-      // 上限 9px:图很小时相机会推得很近,不封顶的话星体会涨成一个个圆盘,
-      // 既不像"星",也会把连线端点盖住
-      const r = Math.max(0.7, Math.min(9, n.r * camera.scale * bucket.radius));
-      ctx.moveTo(c.x + r, c.y);
-      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    for (const i of bucket.idx) {
+      const n = scene.nodes[i];
+      const x = fx[i];
+      const y = fy[i];
+      if (!n || x === undefined || y === undefined) continue;
+      const r = Math.max(0.7, Math.min(9, n.r * scale * bucket.rr));
+      ctx.moveTo(x + r, y);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
     }
     ctx.fill();
   }
@@ -303,10 +368,12 @@ function drawNodes(
   ctx.save();
 
   // ---------- 种子、选中与悬浮:唯一的强调 ----------
-  for (const n of scene.nodes) {
-    if (!n.seed && !n.selected && !n.hovered) continue;
-    const c = worldToScreen(camera, width, height, n);
-    const r = Math.max(2.5, n.r * camera.scale);
+  scene.nodes.forEach((n, i) => {
+    if (!n.seed && !n.selected && !n.hovered) return;
+    const x = fx[i];
+    const y = fy[i];
+    if (x === undefined || y === undefined) return;
+    const r = Math.max(2.5, Math.min(9, n.r * scale));
 
     if (n.seed) {
       const pulse = 1 + Math.sin(time * 1.1) * 0.06;
@@ -314,7 +381,7 @@ function drawNodes(
       ctx.strokeStyle = p.accent;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(c.x, c.y, (r + 7) * pulse, 0, Math.PI * 2);
+      ctx.arc(x, y, (r + 7) * pulse, 0, Math.PI * 2);
       ctx.stroke();
     }
 
@@ -323,10 +390,10 @@ function drawNodes(
       ctx.strokeStyle = n.selected ? p.accent : p.ink2;
       ctx.lineWidth = n.selected ? 1.4 : 1;
       ctx.beginPath();
-      ctx.arc(c.x, c.y, r + 4.5, 0, Math.PI * 2);
+      ctx.arc(x, y, r + 4.5, 0, Math.PI * 2);
       ctx.stroke();
     }
-  }
+  });
 
   ctx.restore();
 }
@@ -346,6 +413,8 @@ function drawLabels(
   p: CanvasPalette,
   a: ReturnType<typeof levelAlpha>,
   level: ViewLevel,
+  fx: Float64Array,
+  fy: Float64Array,
 ): void {
   ctx.save();
   ctx.textAlign = "center";
@@ -363,7 +432,11 @@ function drawLabels(
       .slice(0, LABEL_LIMIT.paper);
 
     for (const n of important) {
-      const c = worldToScreen(camera, width, height, n);
+      const i = scene.nodes.indexOf(n);
+      const x = fx[i];
+      const y = fy[i];
+      if (x === undefined || y === undefined) continue;
+      const c = { x, y };
       if (c.x < 60 || c.x > width - 60 || c.y < 40 || c.y > height - 40) continue;
 
       const isKey = n.seed || n.selected || n.hovered;
@@ -411,24 +484,26 @@ function drawLabels(
       if (c.x < 40 || c.x > width - 40 || c.y < 30 || c.y > height - 30) continue;
 
       // 拉近时星云标题该退场,而不是被论文标签淹掉
+      // 标题落在云顶而不是云心:云心一定是星体最密的地方,标题压上去就糊了
+      const cy = c.y - Math.min(d.r * camera.scale * 0.72, height * 0.3);
       ctx.globalAlpha = 0.9 * a.domainLabel;
       ctx.font = `500 15px ${SANS}`;
       ctx.fillStyle = p.ink;
-      ctx.fillText(d.label, c.x, c.y);
+      ctx.fillText(d.label, c.x, cy);
 
       if (d.labelEn) {
         ctx.globalAlpha = 0.35 * a.domainLabel;
         ctx.font = `9px ${MONO}`;
         ctx.fillStyle = p.ink3;
-        ctx.fillText(d.labelEn.toUpperCase(), c.x, c.y + 18);
+        ctx.fillText(d.labelEn.toUpperCase(), c.x, cy + 18);
       }
 
       ctx.globalAlpha = 0.28 * a.domainLabel;
       ctx.strokeStyle = p.ink3;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(c.x - 26, c.y + 28);
-      ctx.lineTo(c.x + 26, c.y + 28);
+      ctx.moveTo(c.x - 26, cy + 28);
+      ctx.lineTo(c.x + 26, cy + 28);
       ctx.stroke();
     }
   }

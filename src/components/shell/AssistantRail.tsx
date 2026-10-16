@@ -61,7 +61,7 @@ export function AssistantRail({
       }}
       aria-label="研究助手"
     >
-      <header className="flex items-center justify-between border-b border-hair px-5 py-4">
+      <header className="flex items-center justify-between border-b border-hair px-6 py-5">
         <div className="flex items-baseline gap-2">
           <h1 className="text-[12px] tracking-[0.1em] text-ink">AI 研究助手</h1>
           <span className="font-mono text-[9.5px] tracking-[0.1em] text-ink-4 uppercase">
@@ -102,7 +102,7 @@ export function AssistantRail({
         </div>
       </header>
 
-      <div className="border-b border-hair px-5 py-3.5">
+      <div className="border-b border-hair px-6 py-4">
         <SeedSearch
           value={query}
           busy={busy}
@@ -112,7 +112,7 @@ export function AssistantRail({
         />
       </div>
 
-      <div className="flex-1 overflow-y-auto px-5 py-4">
+      <div className="flex-1 overflow-y-auto px-6 py-5">
         {error ? (
           <div className="mb-4 rounded-lg border border-alert/30 px-3 py-2.5">
             <p className="text-[12px] text-alert">{error.message}</p>
@@ -152,8 +152,8 @@ export function AssistantRail({
       </div>
 
       {payload ? (
-        <footer className="border-t border-hair px-5 py-3">
-          <div className="flex flex-col gap-1.5 font-mono text-[10px] text-ink-4">
+        <footer className="border-t border-hair px-6 py-4">
+          <div className="flex flex-col gap-2 font-mono text-[10px] text-ink-4">
             <div className="flex flex-wrap gap-x-4 gap-y-1">
               <span>{payload.graph.stats.papers} 篇</span>
               <span>{payload.graph.stats.edges} 条边</span>
@@ -185,22 +185,24 @@ export function AssistantRail({
 
 function EmptyState({ hasPayload }: { hasPayload: boolean }) {
   return (
-    <div className="flex flex-col gap-3 pt-2">
-      <p className="text-[12.5px] leading-[1.85] text-ink-2">
+    <div className="flex flex-col gap-5 pt-1">
+      <p className="text-[12.5px] leading-[2] text-ink-2">
         {hasPayload
           ? "点击任意星体查看它的论文详情与关系证据,或者在输入框里并入下一篇种子论文。"
           : "输入一篇种子论文,星空会沿着它的研究脉络长出来 —— 引用是引力线,关系是行星。"}
       </p>
-      <ul className="flex flex-col gap-2 border-t border-hair pt-3">
+      <ul className="flex flex-col gap-2.5 border-t border-hair pt-5">
         {[
           ["滚轮", "缩放；拉远看领域星云,推近看论文星体"],
           ["拖拽", "平移整片星空"],
           ["双击星体", "聚焦并推近"],
           ["⌘K", "跳到种子输入框"],
         ].map(([k, v]) => (
-          <li key={k} className="flex items-baseline gap-3 text-[11px]">
-            <span className="w-[62px] shrink-0 font-mono text-ink-3">{k}</span>
-            <span className="text-ink-4">{v}</span>
+          <li key={k} className="flex items-baseline gap-3">
+            <span className="w-[56px] shrink-0 rounded border border-hair-2 px-1.5 py-0.5 text-center font-mono text-[10px] text-ink-3">
+              {k}
+            </span>
+            <span className="text-[11px] leading-relaxed text-ink-4">{v}</span>
           </li>
         ))}
       </ul>

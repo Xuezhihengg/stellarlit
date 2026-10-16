@@ -29,6 +29,7 @@ import type {
 } from "@/types/kg";
 
 import type { OaWork } from "../sources/openalex";
+import { zhLabel } from "./field-labels";
 
 /** 世界尺寸。布局由内容决定,世界只是给相机一个初始范围。 */
 export const WORLD_WIDTH = 2600;
@@ -149,9 +150,10 @@ function labelForCommunity(members: number[], papers: OaWork[]): { zh: string; e
       bestN = n;
     }
   }
-  // OpenAlex 的字段名是英文;界面需要中文标签时由前端做映射,
-  // 这里只保证「有且稳定」——没有足够证据时退回最靠前的主题词。
-  return { zh: best || "未归类前沿" };
+  // OpenAlex 只给英文标签,而"研究前沿"是我们自己归纳的概念 ——
+  // 用中文命名才是对的(论文标题则保留原文,翻译反而有害)。
+  // 查不到的保留英文原名,而不是硬翻成半通不通的中文。
+  return { zh: best ? zhLabel(best) : "未归类前沿" };
 }
 
 export interface BuildOptions {
@@ -345,9 +347,10 @@ export function buildGraph(
     }
     if (!best) best = communityNodes[c]?.label ?? "其他方向";
 
-    const list = domainOf.get(best);
+    const label = zhLabel(best);
+    const list = domainOf.get(label);
     if (list) list.push(c);
-    else domainOf.set(best, [c]);
+    else domainOf.set(label, [c]);
   });
 
   const domainNodes: DomainNode[] = [];

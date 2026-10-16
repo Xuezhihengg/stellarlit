@@ -28,6 +28,56 @@ export interface SceneNode {
   dimmed: boolean;
   /** 该节点相关的关系类型集合,决定高光色 */
   relationKinds: string[];
+  /** 这一颗星自己的运动节律 */
+  motion: StarMotion;
+}
+
+/**
+ * 星体的运动参数。
+ *
+ * 每一颗星有自己的振幅、相位与闪烁频率 —— 整片星空用同一套参数的话,
+ * 会一起明一起暗、一起漂,看起来像在呼吸而不是"活"。
+ *
+ * 参数由**节点 id** 派生,不是由下标派生:增量构建时下标的顺序会变,
+ * 而 id 不变。用下标的话,加一篇论文就会让别的星突然跳到另一个节律上。
+ */
+export interface StarMotion {
+  /** 漂浮振幅(世界像素) */
+  amp: number;
+  /** 漂浮角速度 */
+  spd: number;
+  phx: number;
+  phy: number;
+  /** 视差深度:越大越"近",鼠标移动时位移越多 */
+  dp: number;
+  /** 闪烁相位与频率 */
+  tw: number;
+  tws: number;
+}
+
+function hash01(n: number): number {
+  const x = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+function motionOf(id: string): StarMotion {
+  // FNV-1a:把 id 摊成一个稳定的数,再派生 8 个互不相关的参数
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const base = (h >>> 0) / 4294967296;
+  const k = (i: number) => hash01(base * 1000 + i * 7.13);
+  return {
+    amp: 1 + k(0) * 2.8,
+    spd: 0.1 + k(1) * 0.19,
+    phx: k(2) * Math.PI * 2,
+    phy: k(3) * Math.PI * 2,
+    dp: 0.35 + k(4) * 0.65,
+    tw: k(5) * Math.PI * 2,
+    tws: 0.9 + k(6) * 1.2,
+  };
 }
 
 export interface SceneEdge {
@@ -57,6 +107,14 @@ export interface SceneBlob {
   tone: number;
   count: number;
   medianYear: number;
+  /**
+   * 领域云由**多个柔球融合**而成,而不是一个圆。
+   *
+   * 做法:每个成员社区放一个大球,再沿社区之间的连线每隔约 95px 插一个球 ——
+   * 于是云是"长"出来的、边界是有机的,而不是一个规整的圆。
+   * 这是参考稿里最容易被忽略的一处细节,也是"星云"与"色块"的区别所在。
+   */
+  blobs?: Array<{ x: number; y: number; r: number }>;
 }
 
 export interface Scene {
@@ -168,16 +226,23 @@ export function buildScene(
       hovered: node.id === hoveredId,
       dimmed: minYear !== null && node.year > 0 && node.year < minYear,
       relationKinds: [...(relationKinds.get(node.id) ?? [])],
+      motion: motionOf(node.id),
     });
   }
 
   // ---------- 社区:质心 + 覆盖半径 ----------
   const communityMembers = new Map<string, SceneNode[]>();
+  const communityTone = new Map<string, number>();
+  for (const c of graph.nodes) {
+    if (c.kind === "community") communityTone.set(c.id, c.tone);
+  }
   for (const e of graph.edges) {
     if (e.kind !== "BELONGS_TO") continue;
     const i = index.get(e.source);
     const node = i === undefined ? undefined : nodes[i];
     if (!node) continue;
+    // 把所属前沿的色调写到星体上:光晕靠它上色,于是"哪些星是一伙的"一眼可读
+    node.tone = communityTone.get(e.target) ?? 0;
     const list = communityMembers.get(e.target);
     if (list) list.push(node);
     else communityMembers.set(e.target, [node]);
@@ -237,6 +302,30 @@ export function buildScene(
     let r = 0;
     for (const b of blobs) r = Math.max(r, Math.hypot(b.x - cx, b.y - cy) + b.r);
 
+    // 成员社区各放一个球,再在两两之间按约 95px 的间距插球 → 融合成一片有机的云
+    const fused: Array<{ x: number; y: number; r: number }> = blobs.map((b) => ({
+      x: b.x,
+      y: b.y,
+      r: b.r * 1.06,
+    }));
+    for (let i = 0; i < blobs.length; i++) {
+      for (let j = i + 1; j < blobs.length; j++) {
+        const A = blobs[i];
+        const B = blobs[j];
+        if (!A || !B) continue;
+        const dist = Math.hypot(A.x - B.x, A.y - B.y);
+        const n = Math.max(2, Math.round(dist / 95));
+        for (let k = 1; k < n; k++) {
+          const t = k / n;
+          fused.push({
+            x: A.x + (B.x - A.x) * t,
+            y: A.y + (B.y - A.y) * t,
+            r: Math.min(A.r, B.r) * 0.94,
+          });
+        }
+      }
+    }
+
     domains.push({
       id: d.id,
       kind: "domain",
@@ -248,6 +337,7 @@ export function buildScene(
       tone: d.tone,
       count: d.paperCount,
       medianYear: 0,
+      blobs: fused,
     });
   }
 

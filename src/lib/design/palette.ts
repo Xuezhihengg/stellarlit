@@ -65,12 +65,34 @@ export const PALETTES: Record<Theme, CanvasPalette> = {
  * 颜色一旦被用来区分"这是第几个社区",图例就再也解释不清了。
  */
 export const DOMAIN_TONES = [
-  { dark: "rgba(168,199,250,0.16)", light: "rgba(47,99,196,0.13)" },
-  { dark: "rgba(150,180,225,0.15)", light: "rgba(66,104,168,0.12)" },
-  { dark: "rgba(190,205,235,0.15)", light: "rgba(92,112,150,0.12)" },
-  { dark: "rgba(140,170,215,0.14)", light: "rgba(52,86,140,0.12)" },
-  { dark: "rgba(205,215,240,0.14)", light: "rgba(110,124,158,0.11)" },
+  { dark: "rgba(168,199,250,0.30)", light: "rgba(47,99,196,0.22)" },
+  { dark: "rgba(150,180,225,0.28)", light: "rgba(66,104,168,0.20)" },
+  { dark: "rgba(190,205,235,0.27)", light: "rgba(92,112,150,0.19)" },
+  { dark: "rgba(140,170,215,0.26)", light: "rgba(52,86,140,0.19)" },
+  { dark: "rgba(205,215,240,0.26)", light: "rgba(110,124,158,0.18)" },
 ] as const;
+
+/** "#RRGGBB" + alpha → "rgba(r,g,b,a)"。光晕需要按亮度调透明度,所以要拆开用。 */
+export function hexA(hex: string, alpha: number): string {
+  const h = hex.replace("#", "");
+  const n = Number.parseInt(h.length === 3 ? h.replace(/(.)/g, "$1$1") : h, 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${Number.isFinite(alpha) ? alpha : 0})`;
+}
+
+/**
+ * 光晕的基色。
+ *
+ * 不能直接用 domainTone():那个函数返回的是**已经带透明度**的 rgba 字符串
+ * (星云底光要的就是那种极淡的叠加),而光晕需要自己控制透明度。
+ * 所以这里只取色相,把 alpha 留给调用方。
+ */
+export function domainToneBase(tone: number, theme: Theme): string {
+  return theme === "light" ? LIGHT_GLOW[tone % LIGHT_GLOW.length] ?? LIGHT_GLOW[0]! : GLOW[tone % GLOW.length] ?? GLOW[0]!;
+}
+
+/** 暖白偏冷的发光色,彼此差异刻意很小 —— 靠位置区分群体,不靠彩虹。 */
+const GLOW = ["#DCE9FF", "#C9DCFA", "#E4ECFB", "#BFD4F5", "#EEF3FD"] as const;
+const LIGHT_GLOW = ["#2F63C4", "#3C6FB8", "#4A6E9E", "#2B5590", "#5C708F"] as const;
 
 export function domainTone(tone: number, theme: Theme): string {
   const entry = DOMAIN_TONES[tone % DOMAIN_TONES.length] ?? DOMAIN_TONES[0];

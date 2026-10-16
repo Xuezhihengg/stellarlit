@@ -13,7 +13,6 @@ import { Metric } from "@/components/ui/Metric";
 import { StarfieldCanvas } from "@/components/star-map/StarfieldCanvas";
 import { StarMap } from "@/components/star-map/StarMap";
 import { useTheme } from "@/hooks/use-theme";
-import { levelHint } from "@/lib/graph/scene";
 import { useStarfieldStore } from "@/stores/starfield-store";
 import type { ViewLevel } from "@/types/starfield";
 
@@ -41,7 +40,7 @@ export default function StarfieldPage() {
   const loadCapabilities = useStarfieldStore((s) => s.loadCapabilities);
   const loadById = useStarfieldStore((s) => s.loadById);
 
-  const [level, setLevel] = useState<ViewLevel>("paper");
+  const [, setLevel] = useState<ViewLevel>("paper");
   const [collapsed, setCollapsed] = useState(false);
   const [focus, setFocus] = useState<{ id: string; nonce: number } | null>(null);
 
@@ -147,7 +146,6 @@ export default function StarfieldPage() {
 
       <BottomBar
         payload={payload}
-        viewHint={levelHint(level)}
         minYear={minYear}
         rightInset={collapsed ? 0 : RAIL_WIDTH}
         onMinYearChange={setMinYear}

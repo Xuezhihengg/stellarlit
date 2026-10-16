@@ -20,15 +20,16 @@ export function GhostButton({
   className = "",
   ...rest
 }: GhostButtonProps) {
-  const pad = size === "sm" ? "px-2.5 py-1 text-[11px]" : "px-3.5 py-1.5 text-[12px]";
+  // 胶囊按钮的横向内边距要比纵向明显大,否则文字会"顶"着边框
+  const pad = size === "sm" ? "px-3 py-[5px] text-[11px]" : "px-4 py-1.5 text-[12px]";
   const tone = active
-    ? "border-accent/45 text-accent"
-    : "border-hair-2 text-ink-3 hover:border-hair-2 hover:text-ink-2";
+    ? "border-accent/45 bg-accent/8 text-accent"
+    : "border-hair-2 text-ink-3 hover:border-ink-4 hover:text-ink-2";
 
   return (
     <button
       type="button"
-      className={`rounded-full border ${pad} ${tone} font-normal tracking-[0.04em] transition-colors duration-[--dur-fast] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+      className={`rounded-full border ${pad} ${tone} font-normal tracking-[0.04em] whitespace-nowrap transition-colors duration-[--dur-fast] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
       {...rest}
     >
       {children}

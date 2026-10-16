@@ -87,6 +87,8 @@ export function StarMap({
     lastY: 0,
     moved: 0,
   });
+  /** 归一化指针位置(-0.5~0.5):视差用,每帧变化,只走 ref */
+  const pointerRef = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
 
   /** 渲染循环读的是这一份;React 重渲染时替换内容,引用不变。 */
   const liveRef = useRef<{ scene: Scene | null; payload: StarfieldPayload | null; theme: "dark" | "light" }>(
@@ -217,6 +219,13 @@ export function StarMap({
     };
 
     const onPointerMove = (e: PointerEvent) => {
+      // 视差:指针位置做一次指数平滑,否则鼠标一动整片星空就"抖"
+      const { w: vw, h: vh } = sizeRef.current;
+      if (vw && vh) {
+        pointerRef.current.tx = e.clientX / vw - 0.5;
+        pointerRef.current.ty = e.clientY / vh - 0.5;
+      }
+
       const drag = draggingRef.current;
       if (drag.active) {
         const dx = e.clientX - drag.lastX;
@@ -354,6 +363,12 @@ export function StarMap({
           onViewLevelChange?.(level);
         }
 
+        // 指针平滑:每帧朝目标逼近一点,得到"跟手但不黏"的视差
+        const pr = pointerRef.current;
+        const k = Math.min(1, dt * 3);
+        pr.x += (pr.tx - pr.x) * k;
+        pr.y += (pr.ty - pr.y) * k;
+
         const sceneNow = liveRef.current.scene;
         if (sceneNow) {
           const dpr = sizeRef.current.dpr;
@@ -366,6 +381,7 @@ export function StarMap({
             theme: liveRef.current.theme,
             level,
             time: reduceMotion ? 0 : elapsed,
+            pointer: reduceMotion ? { x: 0, y: 0 } : pointerRef.current,
           });
         }
 

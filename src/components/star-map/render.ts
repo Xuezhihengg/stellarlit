@@ -848,7 +848,14 @@ function drawLabels(
   // ---------- 论文标签:只在推近时出现,且只标最重要的那些 ----------
   if (a.paperLabel > 0.02 && level === "paper") {
     const important = scene.nodes
-      .filter((n) => !n.dimmed && n.citations > 0)
+      /**
+       * 焦点节点无条件进入候选。
+       *
+       * 之前它会被三个条件筛掉:被筛暗淡、被引量为 0、或离视口边缘太近 ——
+       * 于是"点了一颗星,标题却没出现"。选中是用户主动做的动作,
+       * 它的反馈不该被这些针对**背景标签**的限额决定。
+       */
+      .filter((n) => n.id === anim.focusId || (!n.dimmed && n.citations > 0))
       .sort((x, y) => {
         // 种子与焦点项永远优先,其余按被引量。
         // 这里用 focusId 而不是 selected:退场过程中那颗星已经不是 selected 了,
@@ -867,7 +874,10 @@ function drawLabels(
       const y = fy[i];
       if (x === undefined || y === undefined) continue;
       const c = { x, y };
-      if (c.x < 60 || c.x > width - 60 || c.y < 40 || c.y > height - 40) continue;
+      const isFocus = n.id === anim.focusId;
+      // 焦点节点放宽边距:它就该在边上也能看全
+      const margin = isFocus ? 8 : 60;
+      if (c.x < margin || c.x > width - margin || c.y < 40 || c.y > height - 40) continue;
 
       const focus = n.id === anim.focusId ? anim.focus : 0;
 
@@ -909,18 +919,32 @@ function drawLabels(
       ctx.fillStyle = p.ink;
 
       const shortText = truncate(n.label, 30);
-      const longText = truncate(n.label, 52);
       const alphaBase = (0.4 + 0.55 * keyLevel) * a.paperLabel;
       // 标签压在星体上会互相干扰,统一挪到星体下方
       const labelY = c.y + r + 13;
 
-      if (keyLevel < 0.99 && shortText !== longText) {
+      // 短版:常态的一行标签,选中时淡出
+      if (keyLevel < 0.99) {
         ctx.globalAlpha = alphaBase * (1 - keyLevel);
         ctx.fillText(shortText, c.x, labelY);
       }
-      if (keyLevel > 0.01) {
-        ctx.globalAlpha = alphaBase * keyLevel;
-        ctx.fillText(longText, c.x, labelY);
+
+      /**
+       * 长版:选中时展开的**完整标题**,必要时折行 —— 不再用越来越长的截断。
+       *
+       * 一行五六十个字符会横跨半屏,把邻居和边全压住;折成两三行之后
+       * 它仍然贴在星体正下方,读起来还属于这颗星。
+       *
+       * 排版(字号、栏宽、断行点、行数)全部由常量决定,与选中进度无关 ——
+       * 于是第一帧到最后一帧是同一份排布,动效只改透明度。
+       * 之前折行是拿**当帧字号**去量的,而字号在动画里连续长大,
+       * 断行点就跟着每帧重算,看起来像文字在一个框里不停重排。
+       *
+       * 也不画底衬:多行文字压在星空上仍然读得清,而一块矩形底衬会把它
+       * 变成"浮动卡片",跟四周无底衬的标签不是一套语言。
+       */
+      if (keyLevel > 0.01 && isFocus) {
+        drawFocusTitle(ctx, n.label, c.x, labelY, width, height, alphaBase * keyLevel, p.ink);
       }
     }
   }
@@ -987,6 +1011,170 @@ function drawLabels(
 const SANS =
   '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif';
 const MONO = '"SF Mono", ui-monospace, Menlo, monospace';
+
+/**
+ * 选中标题的排版常量。
+ *
+ * 它们**必须是常量**:只要字号或栏宽跟着动画走,断行点就会在动画里重算,
+ * 用户看到的就是"文字随着框的大小在重排"。
+ */
+const FOCUS_TITLE = {
+  /**
+   * 字号:与「重点态」标签(普通 10.5px → 重点 13.9px)同一档偏小,
+   * 但不随选中进度长大 —— 它一出现就是最终大小。
+   */
+  px: 13,
+  /** 栏宽:超过就在这里断行 */
+  maxW: 300,
+  /** 最多几行:再多就压住邻居了,末行收一个省略号 */
+  maxLines: 3,
+  /** 行距倍数 */
+  lineH: 1.42,
+  /** 与视口边缘的最小留白 */
+  pad: 14,
+} as const;
+
+/**
+ * 选中星体下方的完整标题。
+ *
+ * 位置规则:
+ *   - 首行落在短版标签原来那一行上,所以交叉淡入看起来是"从这一行往下长出来";
+ *   - 星体贴着视口边缘时,把整块文字平移进来(位移只跟星体位置有关,
+ *     与动画进度无关,因此不会在动画中途跳一下)。
+ */
+function drawFocusTitle(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  anchorX: number,
+  anchorY: number,
+  viewW: number,
+  viewH: number,
+  alpha: number,
+  color: string,
+): void {
+  ctx.font = `${FOCUS_TITLE.px}px ${SANS}`;
+  const lines = wrapCached(ctx, label, FOCUS_TITLE.maxW, FOCUS_TITLE.maxLines);
+  if (!lines.length) return;
+
+  const lineH = FOCUS_TITLE.px * FOCUS_TITLE.lineH;
+  const blockH = lineH * lines.length;
+  const pad = FOCUS_TITLE.pad;
+  const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
+
+  let top = anchorY - lineH / 2;
+  if (top + blockH > viewH - pad) top = viewH - pad - blockH;
+  if (top < pad) top = pad;
+
+  // 整块比视口还宽时只能居中;否则把它夹进可视区
+  const cx =
+    widest + pad * 2 > viewW
+      ? viewW / 2
+      : Math.min(Math.max(anchorX, widest / 2 + pad), viewW - widest / 2 - pad);
+
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  lines.forEach((line, i) => ctx.fillText(line, cx, top + lineH * (i + 0.5)));
+}
+
+/**
+ * 按像素宽度折行。
+ *
+ * Canvas 没有自动换行,只能自己量。这里按**空格**断词并逐行测量,
+ * 而不是按字符数 —— 前者在等宽/比例字体下都稳定,后者在比例字体里
+ * 会让长短行差得很远。
+ *
+ * 断词之外还要对付**一个词本身就超宽**的情况:中文标题常常整句没有空格,
+ * 英文标题里也偶尔夹一个长缩写。只按空格断的话,它们会顶穿栏宽,
+ * 把整块文字拉成一条横线 —— 所以这种词按字符硬断。
+ *
+ * 超过 maxLines 时在末行加省略号:与其让标题压到邻居身上,
+ * 不如让它有一个明确的收尾。
+ */
+function wrapText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines = 3,
+): string[] {
+  // 断行单元自己带前导空格(除了第一个),这样换行时把空格一并丢掉即可
+  const units: string[] = [];
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const lead = units.length ? " " : "";
+    if (ctx.measureText(word).width <= maxWidth) {
+      units.push(`${lead}${word}`);
+      continue;
+    }
+    // 这个词本身就超宽 → 按字符硬断(只有第一段继承那个空格)
+    let part = "";
+    let prefix = lead;
+    for (const ch of word) {
+      if (part && ctx.measureText(part + ch).width > maxWidth) {
+        units.push(prefix + part);
+        prefix = "";
+        part = "";
+      }
+      part += ch;
+    }
+    if (part) units.push(prefix + part);
+  }
+
+  const lines: string[] = [];
+  let line = "";
+  let rest = "";
+
+  for (const u of units) {
+    if (!line) {
+      line = u.trimStart();
+      continue;
+    }
+    if (ctx.measureText(line + u).width <= maxWidth) {
+      line += u;
+      continue;
+    }
+    lines.push(line);
+    if (lines.length === maxLines) {
+      rest = u.trimStart();
+      break;
+    }
+    line = u.trimStart();
+  }
+  if (rest) {
+    const last = lines[lines.length - 1] ?? "";
+    let trimmed = last;
+    while (trimmed.length > 1 && ctx.measureText(`${trimmed}…`).width > maxWidth) {
+      trimmed = trimmed.slice(0, -1);
+    }
+    lines[lines.length - 1] = `${trimmed}…`;
+  } else if (line) {
+    lines.push(line);
+  }
+
+  return lines;
+}
+
+/**
+ * 折行结果缓存。
+ *
+ * 同一颗星选中期间,折行的输入(文字、字号、栏宽)是恒定的 ——
+ * 每帧重新量一遍纯属浪费。缓存之外,它还让"断行一定稳定"这件事更硬:
+ * 同一个 key 只会拿到同一份行数组。
+ */
+const wrapCache = new Map<string, string[]>();
+
+function wrapCached(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const key = `${ctx.font}|${maxWidth}|${maxLines}|${text}`;
+  const hit = wrapCache.get(key);
+  if (hit) return hit;
+  const lines = wrapText(ctx, text, maxWidth, maxLines);
+  if (wrapCache.size > 256) wrapCache.clear();
+  wrapCache.set(key, lines);
+  return lines;
+}
 
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;

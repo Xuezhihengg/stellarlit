@@ -12,6 +12,7 @@
  */
 
 import { worldToScreen, type Camera } from "@/lib/design/camera";
+import { placeLabelBlock, wrapByWidth } from "@/lib/design/label-layout";
 import { domainTone, domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
 import type { Scene, SceneBlob, SceneEdge } from "@/lib/graph/scene";
 import type { Theme } from "@/hooks/use-theme";
@@ -1056,107 +1057,29 @@ function drawFocusTitle(
   const lines = wrapCached(ctx, label, FOCUS_TITLE.maxW, FOCUS_TITLE.maxLines);
   if (!lines.length) return;
 
-  const lineH = FOCUS_TITLE.px * FOCUS_TITLE.lineH;
-  const blockH = lineH * lines.length;
-  const pad = FOCUS_TITLE.pad;
-  const widest = Math.max(...lines.map((l) => ctx.measureText(l).width));
-
-  let top = anchorY - lineH / 2;
-  if (top + blockH > viewH - pad) top = viewH - pad - blockH;
-  if (top < pad) top = pad;
-
-  // 整块比视口还宽时只能居中;否则把它夹进可视区
-  const cx =
-    widest + pad * 2 > viewW
-      ? viewW / 2
-      : Math.min(Math.max(anchorX, widest / 2 + pad), viewW - widest / 2 - pad);
+  const block = placeLabelBlock({
+    lines,
+    lineHeight: FOCUS_TITLE.px * FOCUS_TITLE.lineH,
+    anchor: { x: anchorX, y: anchorY },
+    viewport: { width: viewW, height: viewH },
+    padding: FOCUS_TITLE.pad,
+    measure: (s) => ctx.measureText(s).width,
+  });
 
   ctx.globalAlpha = alpha;
   ctx.fillStyle = color;
-  lines.forEach((line, i) => ctx.fillText(line, cx, top + lineH * (i + 0.5)));
-}
-
-/**
- * 按像素宽度折行。
- *
- * Canvas 没有自动换行,只能自己量。这里按**空格**断词并逐行测量,
- * 而不是按字符数 —— 前者在等宽/比例字体下都稳定,后者在比例字体里
- * 会让长短行差得很远。
- *
- * 断词之外还要对付**一个词本身就超宽**的情况:中文标题常常整句没有空格,
- * 英文标题里也偶尔夹一个长缩写。只按空格断的话,它们会顶穿栏宽,
- * 把整块文字拉成一条横线 —— 所以这种词按字符硬断。
- *
- * 超过 maxLines 时在末行加省略号:与其让标题压到邻居身上,
- * 不如让它有一个明确的收尾。
- */
-function wrapText(
-  ctx: CanvasRenderingContext2D,
-  text: string,
-  maxWidth: number,
-  maxLines = 3,
-): string[] {
-  // 断行单元自己带前导空格(除了第一个),这样换行时把空格一并丢掉即可
-  const units: string[] = [];
-  for (const word of text.split(/\s+/).filter(Boolean)) {
-    const lead = units.length ? " " : "";
-    if (ctx.measureText(word).width <= maxWidth) {
-      units.push(`${lead}${word}`);
-      continue;
-    }
-    // 这个词本身就超宽 → 按字符硬断(只有第一段继承那个空格)
-    let part = "";
-    let prefix = lead;
-    for (const ch of word) {
-      if (part && ctx.measureText(part + ch).width > maxWidth) {
-        units.push(prefix + part);
-        prefix = "";
-        part = "";
-      }
-      part += ch;
-    }
-    if (part) units.push(prefix + part);
-  }
-
-  const lines: string[] = [];
-  let line = "";
-  let rest = "";
-
-  for (const u of units) {
-    if (!line) {
-      line = u.trimStart();
-      continue;
-    }
-    if (ctx.measureText(line + u).width <= maxWidth) {
-      line += u;
-      continue;
-    }
-    lines.push(line);
-    if (lines.length === maxLines) {
-      rest = u.trimStart();
-      break;
-    }
-    line = u.trimStart();
-  }
-  if (rest) {
-    const last = lines[lines.length - 1] ?? "";
-    let trimmed = last;
-    while (trimmed.length > 1 && ctx.measureText(`${trimmed}…`).width > maxWidth) {
-      trimmed = trimmed.slice(0, -1);
-    }
-    lines[lines.length - 1] = `${trimmed}…`;
-  } else if (line) {
-    lines.push(line);
-  }
-
-  return lines;
+  lines.forEach((line, i) => {
+    const at = block.positions[i];
+    if (at) ctx.fillText(line, at.x, at.y);
+  });
 }
 
 /**
  * 折行结果缓存。
  *
- * 同一颗星选中期间,折行的输入(文字、字号、栏宽)是恒定的 ——
- * 每帧重新量一遍纯属浪费。缓存之外,它还让"断行一定稳定"这件事更硬:
+ * 折行算法在 lib/design/label-layout.ts(纯函数、可脱离浏览器验证),
+ * 这里只补一层缓存:同一颗星选中期间,折行的输入(文字、字号、栏宽)是恒定的,
+ * 每帧重新量一遍纯属浪费。缓存之外,它还让"断行一定稳定"这件事更硬 ——
  * 同一个 key 只会拿到同一份行数组。
  */
 const wrapCache = new Map<string, string[]>();
@@ -1170,7 +1093,7 @@ function wrapCached(
   const key = `${ctx.font}|${maxWidth}|${maxLines}|${text}`;
   const hit = wrapCache.get(key);
   if (hit) return hit;
-  const lines = wrapText(ctx, text, maxWidth, maxLines);
+  const lines = wrapByWidth(text, maxWidth, maxLines, (s) => ctx.measureText(s).width);
   if (wrapCache.size > 256) wrapCache.clear();
   wrapCache.set(key, lines);
   return lines;

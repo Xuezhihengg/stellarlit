@@ -10,8 +10,9 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check:tokens": "tsx scripts/check-tokens.ts",
+    "check:label": "tsx scripts/check-label-layout.ts",
     "probe": "tsx --env-file=.env.local scripts/relation-probe.mts",
-    "check": "pnpm typecheck && pnpm lint && pnpm check:tokens"
+    "check": "pnpm typecheck && pnpm lint && pnpm check:tokens && pnpm check:label"
   },
   "dependencies": {
     "next": "15.5.27",

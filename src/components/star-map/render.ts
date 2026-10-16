@@ -13,7 +13,7 @@
 
 import { worldToScreen, type Camera } from "@/lib/design/camera";
 import { domainTone, domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
-import type { Scene, SceneBlob } from "@/lib/graph/scene";
+import type { Scene, SceneBlob, SceneEdge } from "@/lib/graph/scene";
 import type { Theme } from "@/hooks/use-theme";
 import type { ViewLevel } from "@/types/starfield";
 
@@ -174,7 +174,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
    * 粒子会变成一片没意义的噪点。
    */
   if (a.edge > 0.01 && level !== "domain") {
-    drawCitationParticles(ctx, scene, p, fx, fy, anim, time);
+    drawCitationParticles(ctx, scene, p, fx, fy, anim, time, level);
   }
 
   // ---------- 5b. 语义关系的文字 ----------
@@ -649,6 +649,31 @@ function drawEdgeLabels(
  * 用静态文字标注去向,读的人要在脑子里再翻译一次;粒子直接把过程演出来。
  * 这是整套视觉里唯一一处"动起来的信息",因此只在选中星体时出现,不常驻。
  */
+/**
+ * 一条边的**当前亮度**(0~1 量级的 alpha)。画线与粒子共用这一个函数。
+ *
+ * 这是这一版最关键的修正:之前"线有多亮"和"粒子该不该有光晕"是两套
+ * 各自演化的公式 —— 它们在边缘情况上不断漂移,表现就是
+ * "有的亮边有光晕、有的没有",而且每次改一处都只修好一半。
+ *
+ * 现在只有一个真相源:这个数大,线就亮、粒子就有光晕;这个数小,
+ * 线就暗、粒子就暗且无光晕。两者不可能再对不上。
+ */
+function edgeLuminance(
+  e: SceneEdge,
+  level: ViewLevel,
+  anim: AnimState,
+  focusIndex: number,
+): number {
+  const semantic = e.layer === "semantic";
+  const idle = semantic ? (level === "paper" ? 0.46 : 0.4) : level === "paper" ? 0.14 : 0.18;
+  const lit = semantic ? 0.78 : 0.45;
+  const focused = focusIndex >= 0 && (e.a === focusIndex || e.b === focusIndex);
+  const f = Math.max(0, Math.min(1, anim.focus));
+  const base = focused ? idle + (lit - idle) * f : idle;
+  return base * (e.faded ? 0.12 : 1) * (anim.edgeAlpha.get(e.id) ?? 1);
+}
+
 function drawCitationParticles(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
@@ -657,6 +682,7 @@ function drawCitationParticles(
   fy: Float64Array,
   anim: AnimState,
   time: number,
+  level: ViewLevel,
 ): void {
   /**
    * 粒子常驻,不再等选中才出现。
@@ -689,33 +715,13 @@ function drawCitationParticles(
 
   for (const e of links) {
     /**
-     * 选中项相连的边,粒子更强一档。
-     *
-     * 选中是"我在看这颗星"的声明,与它相关的引用方向理应更醒目 ——
-     * 但只是"更醒目",不是"换一套视觉",所以仍是同一套参数乘以一个系数。
+     * 亮度与光晕都取自 edgeLuminance —— 与画线用的是同一个数。
+     * 0 = 暗到不该有光晕,1 = 完全点亮。
      */
-    const focused = focusIndex >= 0 && (e.a === focusIndex || e.b === focusIndex);
+    const lum = edgeLuminance(e, level, anim, focusIndex);
+    const glow = Math.max(0, Math.min(1, (lum - 0.18) / 0.3));
 
-    /**
-     * 粒子的亮度与光晕,跟着**这条边当前的明暗**走 —— 而不是跟着它的类型走。
-     *
-     * 这里踩过一个坑:一度按 `e.layer === "semantic"` 判断要不要光晕。
-     * 但"亮"与"是语义边"不是一回事:引用边在没被选中时是暗的,
-     * 一旦与选中的星相连,它会被提亮到接近语义边的程度 ——
-     * 那时它明明亮着,却因为 layer 是 structural 而没有光晕。
-     *
-     * 现在按亮度算:亮度 = 该类型在"静"与"亮"两档之间按焦点插值,
-     * 与 drawEdges 里用的是同一个公式。于是光晕强度天然跟着焦点动画走,
-     * 点击时渐显、取消时渐隐,不需要额外写一套过渡。
-     */
-    const idleLum = e.layer === "semantic" ? 0.46 : 0.14;
-    const litLum = e.layer === "semantic" ? 0.78 : 0.45;
-    const lum = focused ? idleLum + (litLum - idleLum) * anim.focus : idleLum;
-    // 0 = 暗到不该有光晕;1 = 完全点亮
-    const glow = Math.max(0, Math.min(1, (lum - 0.18) / 0.35));
-
-    const boost = focused ? 1.4 : 1;
-    const weight = 0.34 + 0.66 * glow;
+    // 粒子跟着线走,所以取的是漂浮后的屏幕坐标
     const ax = fx[e.a];
     const ay = fy[e.a];
     const bx = fx[e.b];
@@ -749,9 +755,6 @@ function drawCitationParticles(
     const speed = 0.2 / Math.max(0.4, Math.min(2.2, worldLen / 220));
     const phase = seed;
 
-    // 与线共用透明度:线在淡入淡出时,粒子跟着一起
-    const edgeFade = anim.edgeAlpha.get(e.id) ?? 1;
-    if (edgeFade < 0.05) continue;
 
     // 一条边同时只有一个粒子:方向是"点"的信息,不需要一串
     {
@@ -771,10 +774,10 @@ function drawCitationParticles(
        * "有的有光晕、有的没有"。
        */
       const posFade = Math.min(1, Math.min(u, 1 - u) / 0.09);
-      const strength = Math.min(1, posFade * edgeFade * boost * weight);
+      const strength = Math.min(1, posFade * (0.3 + 0.7 * glow));
       if (strength < 0.02) continue;
 
-      const r = (1.4 + 0.5 * posFade) * (0.85 + 0.3 * boost) * (0.84 + 0.3 * glow);
+      const r = (1.4 + 0.5 * posFade) * (0.82 + 0.45 * glow);
 
       /**
        * 光晕**不跟着位置一起消失**。
@@ -785,10 +788,12 @@ function drawCitationParticles(
        * 于是整条边上光晕始终在,只是端点处稍弱。
        */
       if (glow > 0.02) {
-        const glowA = Math.min(1, (0.6 + 0.4 * posFade) * edgeFade * boost * weight * glow);
-        const g = ctx.createRadialGradient(px, py, 0, px, py, r * 4.2);
-        g.addColorStop(0, hexA(p.accent, Math.min(1, 1.15 * glowA)));
-        g.addColorStop(0.45, hexA(p.accent, Math.min(1, 0.32 * glowA)));
+        // 位置只轻微影响光晕(最低保留 60%):有没有光晕由边的明暗决定,
+        // 不该由粒子此刻跑到哪儿决定
+        const glowA = (0.6 + 0.4 * posFade) * glow;
+        const g = ctx.createRadialGradient(px, py, 0, px, py, r * 4.4);
+        g.addColorStop(0, hexA(p.accent, Math.min(1, 1.35 * glowA)));
+        g.addColorStop(0.45, hexA(p.accent, Math.min(1, 0.4 * glowA)));
         g.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = g;
         ctx.beginPath();

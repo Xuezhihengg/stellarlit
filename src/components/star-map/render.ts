@@ -762,22 +762,37 @@ function drawCitationParticles(
       const py = iu * iu * ay + 2 * iu * u * cy + u * u * by;
 
       // 两端渐隐:粒子从引用者身上"生成",到被引用者身上"汇入"
-      const fade = Math.min(1, Math.min(u, 1 - u) / 0.14);
-      const strength = Math.min(1, fade * edgeFade * boost * weight);
+      /**
+       * 端部过渡收窄到 9%(原来 14%)。
+       *
+       * 它决定了粒子"从边上长出来 / 汇进去"的那一小段 —— 但
+       * 只有一个粒子时,这段过渡会在每一圈里占掉近三成的时间,
+       * 于是任意时刻总有一部分粒子正好隐在端部,看起来就是
+       * "有的有光晕、有的没有"。
+       */
+      const posFade = Math.min(1, Math.min(u, 1 - u) / 0.09);
+      const strength = Math.min(1, posFade * edgeFade * boost * weight);
       if (strength < 0.02) continue;
 
-      const r = (1.4 + 0.5 * fade) * (0.85 + 0.3 * boost) * (0.84 + 0.3 * glow);
+      const r = (1.4 + 0.5 * posFade) * (0.85 + 0.3 * boost) * (0.84 + 0.3 * glow);
 
-      // 光晕强度与它出现的时机都由 glow 控制:暗边没有,亮边有,
-      // 点击时随焦点渐显 —— 这正是"光晕的出现与消失也带动效"
+      /**
+       * 光晕**不跟着位置一起消失**。
+       *
+       * 之前光晕的透明度直接乘 strength,于是粒子走到边两端时
+       * 光晕也一起没了 —— 而"有没有光晕"本该只由边的明暗决定。
+       * 现在光晕只受位置轻微影响(最低保留 60%),端部只收一点点,
+       * 于是整条边上光晕始终在,只是端点处稍弱。
+       */
       if (glow > 0.02) {
-        const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3.6);
-        g.addColorStop(0, hexA(p.accent, Math.min(1, 0.9 * strength * glow)));
-        g.addColorStop(0.4, hexA(p.accent, Math.min(1, 0.26 * strength * glow)));
+        const glowA = Math.min(1, (0.6 + 0.4 * posFade) * edgeFade * boost * weight * glow);
+        const g = ctx.createRadialGradient(px, py, 0, px, py, r * 4.2);
+        g.addColorStop(0, hexA(p.accent, Math.min(1, 1.15 * glowA)));
+        g.addColorStop(0.45, hexA(p.accent, Math.min(1, 0.32 * glowA)));
         g.addColorStop(1, "rgba(0,0,0,0)");
         ctx.fillStyle = g;
         ctx.beginPath();
-        ctx.arc(px, py, r * 3.6, 0, Math.PI * 2);
+        ctx.arc(px, py, r * 4.2, 0, Math.PI * 2);
         ctx.fill();
       }
 

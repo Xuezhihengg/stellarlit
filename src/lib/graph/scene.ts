@@ -125,6 +125,14 @@ export interface SceneEdge {
    * 标签表达"怎么相关"。
    */
   kinds: string[];
+  /**
+   * 这条边背后**是否也有一条引用**。
+   *
+   * 合并之后 kind 取的是语义类型,引用那条被"吃掉"了 ——
+   * 但关系并没有消失:基线关系往往正是建立在引用之上的。
+   * 所以方向信息要单独留一个标志,不能靠 kind 反推。
+   */
+  hasCitation: boolean;
 }
 
 export interface SceneBlob {
@@ -453,6 +461,7 @@ export function buildScene(
       faded: Boolean(dimmedKinds?.has(e.kind)),
       label: layer === "semantic" ? (EDGE_LABEL[e.kind] ?? e.kind) : "",
       kinds: [EDGE_LABEL[e.kind] ?? e.kind],
+      hasCitation: e.kind === "CITES",
     };
 
     const prev = byPair.get(key);
@@ -478,6 +487,8 @@ export function buildScene(
       label: semanticLabels.join(" · "),
       // 只要有一个关系没被关掉,这条边就仍然算"可见"
       faded: prev.faded && candidate.faded,
+      // 只要其中之一是引用,这条边的方向就值得用粒子表达
+      hasCitation: prev.hasCitation || candidate.hasCitation,
       active: prev.active || candidate.active,
     });
   }

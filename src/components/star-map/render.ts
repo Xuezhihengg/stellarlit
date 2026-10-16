@@ -660,17 +660,18 @@ function drawCitationParticles(
   if (appear < 0.02) return;
 
   /**
-   * 关掉"引用"这个开关,收起的是那张灰色的网,**不是引用关系本身**。
+   * 粒子和线**同进同退** —— 线被关掉,粒子也跟着关掉。
    *
-   * 之前粒子跟着边一起隐藏,结果是把引用关掉之后,画面上完全看不出
-   * 谁引用了谁 —— 而引用是这套图谱里唯一**客观可核验**的关系,
-   * 不该被一个展示开关抹掉。现在:线收起来(去噪),方向继续用粒子表达。
-   *
-   * 粒子透明度因此不再接边的淡出进度,淡出的边只稍微压一档,
-   * 免得它比开着的线还抢眼。
+   * 但要按 `hasCitation` 而不是 `kind` 来筛:语义边(基线、同期……)
+   * 背后往往就是一条引用(基线关系本来就建立在引用之上),合并之后
+   * kind 变成语义类型,引用那条被"吃掉"了 —— 用 kind 筛会把它们全漏掉。
+   * 那些边是亮着的,所以它们的引用方向理应看得见。
    */
   const links = scene.edges.filter(
-    (e) => e.kind === "CITES" && (e.a === focusIndex || e.b === focusIndex),
+    (e) =>
+      e.hasCitation &&
+      !e.faded &&
+      (e.a === focusIndex || e.b === focusIndex),
   );
   if (!links.length) return;
 
@@ -699,8 +700,9 @@ function drawCitationParticles(
     const speed = 0.34 / Math.max(0.4, Math.min(2.2, len / 220));
     const phase = seed;
 
-    // 引用边被关掉时粒子仍然保留,只压一档
-    const edgeFade = e.faded ? 0.75 : 1;
+    // 与线共用透明度:线在淡入淡出时,粒子跟着一起
+    const edgeFade = anim.edgeAlpha.get(e.id) ?? 1;
+    if (edgeFade < 0.05) continue;
 
     for (let k = 0; k < 2; k++) {
       const raw = (time * speed + phase + k * 0.5) % 1;

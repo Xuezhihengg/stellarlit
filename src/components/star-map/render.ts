@@ -646,8 +646,18 @@ function drawCitationParticles(
   const appear = Math.min(1, Math.max(0, (anim.focus - 0.15) / 0.7));
   if (appear < 0.02) return;
 
+  /**
+   * 被隐藏(淡出)的边不画粒子。
+   *
+   * 否则会出现很割裂的画面:线已经淡到几乎看不见了,
+   * 粒子却还亮着在跑 —— 用户会以为"这条边还在",而它其实是被关掉的。
+   * 粒子和线是同一个信息的两种表达,必须同进同退。
+   */
   const links = scene.edges.filter(
-    (e) => e.kind === "CITES" && (e.a === focusIndex || e.b === focusIndex),
+    (e) =>
+      e.kind === "CITES" &&
+      !e.faded &&
+      (e.a === focusIndex || e.b === focusIndex),
   );
   if (!links.length) return;
 
@@ -676,6 +686,10 @@ function drawCitationParticles(
     const speed = 0.34 / Math.max(0.4, Math.min(2.2, len / 220));
     const phase = seed;
 
+    // 与线共用透明度:线在淡入淡出时,粒子跟着一起
+    const edgeFade = anim.edgeAlpha.get(e.id) ?? 1;
+    if (edgeFade < 0.05) continue;
+
     for (let k = 0; k < 2; k++) {
       const raw = (time * speed + phase + k * 0.5) % 1;
       const u = forward ? raw : 1 - raw;
@@ -685,21 +699,24 @@ function drawCitationParticles(
 
       // 两端渐隐:粒子从引用者身上"生成",到被引用者身上"汇入"
       const fade = Math.min(1, Math.min(u, 1 - u) / 0.14);
-      const r = 1.5 + 0.6 * fade;
+      const strength = fade * appear * edgeFade;
 
-      const g = ctx.createRadialGradient(px, py, 0, px, py, r * 4);
-      g.addColorStop(0, hexA(p.accent, 0.95 * fade * appear));
-      g.addColorStop(0.4, hexA(p.accent, 0.3 * fade * appear));
+      // 粒子要"看得见但不去抢戏":尺寸与亮度都比上一版收敛将近一半
+      const r = 1.0 + 0.35 * fade;
+
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3);
+      g.addColorStop(0, hexA(p.accent, 0.42 * strength));
+      g.addColorStop(0.4, hexA(p.accent, 0.12 * strength));
       g.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(px, py, r * 4, 0, Math.PI * 2);
+      ctx.arc(px, py, r * 3, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.globalAlpha = fade * appear;
-      ctx.fillStyle = p.ink;
+      ctx.globalAlpha = 0.62 * strength;
+      ctx.fillStyle = p.ink2;
       ctx.beginPath();
-      ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
+      ctx.arc(px, py, r * 0.5, 0, Math.PI * 2);
       ctx.fill();
     }
   }

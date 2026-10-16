@@ -89,7 +89,15 @@ export function repulsion(
             d2 = 0.02;
           }
 
-          const f = strength / d2;
+          /**
+           * 单次迭代的位移上限。
+           *
+           * 斥力是 strength/d²,两个几乎重合的节点(d²≈0.02)会得到约 1500px 的位移 ——
+           * 一次迭代就把整个布局炸开。实测增量构建时坐标范围因此被拉到 1.6 万像素,
+           * 而整图的最近邻间距仍是正常的 64px,所以密度归一化也救不回来。
+           * 夹住上限之后,重合只会在几十次迭代里被缓慢推开,布局始终收敛。
+           */
+          const f = Math.min(strength / d2, MAX_STEP);
           const d = Math.sqrt(d2);
           const fx = (vx / d) * f;
           const fy = (vy / d) * f;
@@ -102,6 +110,9 @@ export function repulsion(
     }
   }
 }
+
+/** 斥力在单次迭代内允许产生的最大位移(世界坐标像素)。 */
+const MAX_STEP = 6;
 
 export function layoutGraph(
   nodeCount: number,

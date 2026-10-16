@@ -88,7 +88,9 @@ export interface SceneOptions {
 export type EdgeToneKey = "ink4" | "ink3" | "ink2" | "accent" | "warm" | "alert";
 
 const EDGE_TONE: Record<string, EdgeToneKey> = {
-  CITES: "ink4",
+  // 引用线用 ink3 而不是 ink4:ink4 在深空底色上几乎不可见,
+  // 而引用关系是整张图的骨架,看不见骨架的星图就只剩一堆散点
+  CITES: "ink3",
   BASELINE_OF: "ink2",
   EXTENDS: "accent",
   SIMILAR_APPROACH: "accent",

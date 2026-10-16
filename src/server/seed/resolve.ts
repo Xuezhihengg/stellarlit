@@ -9,7 +9,7 @@
 
 import type { SeedCandidate } from "@/types/starfield";
 
-import { getArxivEntries } from "../sources/arxiv";
+import { getArxivEntries, searchArxiv } from "../sources/arxiv";
 import { getWorkById, getWorkByDoi, searchWorksByTitle, type OaWork } from "../sources/openalex";
 
 export type SeedKind = "arxiv" | "doi" | "openalex" | "title";
@@ -132,7 +132,29 @@ async function matchByTitle(
   year: number | undefined,
   known: ReadonlySet<string>,
 ): Promise<SeedCandidate[]> {
-  const works = await searchWorksByTitle(title, 8);
+  let works;
+  try {
+    works = await searchWorksByTitle(title, 8);
+  } catch {
+    /**
+     * OpenAlex 不可用时退回 arXiv。
+     *
+     * 退回来的候选是**同一个坐标系之外**的:arXiv 给不出被引量,
+     * 也没有引文邻域。所以它只解决"能不能开始",不解决"图上有什么" ——
+     * 建图阶段会再走一次源选择。这里如实标注,不假装数据和主源一样。
+     */
+    return (await searchArxiv(title, 5)).map((e) => ({
+      id: `paper:ARXIV:${e.arxivId}`,
+      title: e.title,
+      year: e.year,
+      venue: e.primaryCategory || undefined,
+      citations: 0,
+      authors: e.authors.slice(0, 4),
+      confidence: titleSimilarity(title, e.title),
+      reason: "arXiv 匹配(OpenAlex 不可用时的备份源;该源不提供被引量)",
+      alreadyInStarfield: known.has(`paper:ARXIV:${e.arxivId}`),
+    }));
+  }
   return works
     .map((w) => {
       const sim = titleSimilarity(title, w.title);

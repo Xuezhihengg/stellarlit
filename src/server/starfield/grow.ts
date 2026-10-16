@@ -20,6 +20,7 @@ import type { RelationReport } from "../relations/pipeline";
 import { buildSemanticEdges } from "../relations/pipeline";
 import { BUILTIN_PRESETS } from "../relations/presets";
 import { getCitingWorks, getWorkById, getWorksByIds, type OaWork } from "../sources/openalex";
+import { s2Neighborhood } from "../sources/semantic-scholar";
 import { assessQuality, emptyQualitySummary, recordQuality } from "../sources/quality";
 import { loadStarfield, saveStarfield } from "./store";
 
@@ -77,6 +78,25 @@ export interface Neighborhood {
 
 async function neighborhoodOf(seedId: string, pool: number): Promise<Neighborhood | null> {
   return cached("neighborhood", `${seedId}-p${pool}`, async () => {
+    /**
+     * 主源失败时切到 Semantic Scholar。
+     *
+     * 切的是**整个邻域**,不是某一次请求 —— 混用两个源会让同一篇论文
+     * 出现两份记录、id 空间也对不上。要么 OpenAlex、要么 S2,
+     * 一次建图之内保持一致。
+     */
+    try {
+      return await openAlexNeighborhood(seedId, pool);
+    } catch (e) {
+      const fallback = await s2Neighborhood(seedId, pool);
+      if (!fallback) throw e;
+      return { seedId, ...fallback } satisfies Neighborhood;
+    }
+  });
+}
+
+async function openAlexNeighborhood(seedId: string, pool: number): Promise<Neighborhood | null> {
+  {
     const seed = await getWorkById(seedId);
     if (!seed) return null;
 
@@ -94,7 +114,7 @@ async function neighborhoodOf(seedId: string, pool: number): Promise<Neighborhoo
     }
 
     return { seedId, seed, backward, forward } satisfies Neighborhood;
-  });
+  }
 }
 
 /**

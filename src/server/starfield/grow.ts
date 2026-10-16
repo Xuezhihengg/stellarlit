@@ -16,6 +16,7 @@ import type { SeedEntry, Starfield } from "@/types/starfield";
 import { capabilityReport } from "../config";
 import { cached } from "../cache";
 import { buildGraph, dedupe, type PreviousState } from "../graph/build";
+import type { RelationReport } from "../relations/pipeline";
 import { buildSemanticEdges } from "../relations/pipeline";
 import { BUILTIN_PRESETS } from "../relations/presets";
 import { getCitingWorks, getWorkById, getWorksByIds, type OaWork } from "../sources/openalex";
@@ -52,6 +53,9 @@ const DEFAULT_POOL = 40;
  * 调大能长出一张更密的语义图,代价接近线性。
  */
 const DEFAULT_JUDGE_DEPTH = 12;
+
+/** 传递扩展默认层数。两层是"图能长大"与"成本可控"之间的折中。 */
+const DEFAULT_EXPAND_DEPTH = 2;
 
 const currentYear = () => new Date().getFullYear();
 
@@ -233,21 +237,83 @@ export interface GrowOptions {
   pool?: number;
   /** 不需要判定的论文数上限;语义判定命中的论文不受此限 */
   budget?: number;
-  /** 每类关系送审多少对候选 —— 直接决定模型成本与图的稠密程度 */
+  /** 每类关系送审多少对候选 —— 直接决定模型成本与语义图的稠密程度 */
   judgeDepth?: number;
+  /**
+   * 传递扩展的层数。
+   *
+   * 一层:种子和结构核向外找一圈,图长到"核心 + 一圈"就停了(实测 18 篇)。
+   * 两层:第一轮命中的论文成为新的探索中心,再向外长一圈 —— 图才真正"生长"起来。
+   * 不建议更深:每多一层,候选量与调用量都接近翻倍,而边际收益衰减得很快
+   * (越往外,与种子的关联越弱,判定为成立的比例也越低)。
+   */
+  depth?: number;
   /** 用户在设置页改写过的关系预设;缺省时用内置的那一份 */
   presets?: RelationPreset[];
 }
 
 /**
- * 让星空长大。
+ * 构建过程中的事件。
  *
- * 已有星空:并入新种子,增量构建。
- * 新星空:从零构建。
+ * 这条流同时服务两件事:**传递扩展需要知道每一轮长出了什么**,
+ * **流式返回需要把中间结果推给前端**。用同一条事件流而不是两套回调,
+ * 是为了让"非流式"和"流式"永远走同一段代码 —— 否则两条路径迟早会跑偏。
  */
-export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload> {
+export type GrowEvent =
+  | {
+      type: "structure";
+      starfield: Starfield;
+      graph: Graph;
+      layout: GraphLayout;
+      presets: RelationPreset[];
+    }
+  | { type: "graph"; graph: Graph; layout: GraphLayout }
+  | {
+      type: "progress";
+      round: number;
+      depth: number;
+      judged: number;
+      matched: number;
+      llmCalls: number;
+      estimatedTokens: number;
+    }
+  | { type: "done"; payload: StarfieldPayload }
+  | { type: "error"; message: string };
+
+function sumReports(target: RelationReport, add: RelationReport): void {
+  target.rejectedQuotes += add.rejectedQuotes;
+  target.llmCalls += add.llmCalls;
+  target.estimatedTokens += add.estimatedTokens;
+  target.cacheHits += add.cacheHits;
+  target.batchFallbacks += add.batchFallbacks;
+  target.judgedPairs.push(...add.judgedPairs);
+  for (const [id, stat] of Object.entries(add.perPreset)) {
+    const cur = target.perPreset[id];
+    if (!cur) {
+      target.perPreset[id] = { ...stat };
+      continue;
+    }
+    cur.candidates += stat.candidates;
+    cur.judged += stat.judged;
+    cur.matched += stat.matched;
+  }
+}
+
+const emptyReport = (): RelationReport => ({
+  perPreset: {},
+  rejectedQuotes: 0,
+  llmCalls: 0,
+  estimatedTokens: 0,
+  cacheHits: 0,
+  batchFallbacks: 0,
+  judgedPairs: [],
+});
+
+async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent> {
   const started = Date.now();
   const poolSize = Math.max(6, Math.min(200, opts.pool ?? DEFAULT_POOL));
+  const depth = Math.max(1, Math.min(3, opts.depth ?? DEFAULT_EXPAND_DEPTH));
+  const judgeDepth = Math.max(4, Math.min(40, opts.judgeDepth ?? DEFAULT_JUDGE_DEPTH));
   const seedOaId = opts.seedPaperId.replace(/^paper:/, "");
   const presets: RelationPreset[] = opts.presets?.length ? opts.presets : BUILTIN_PRESETS;
 
@@ -255,7 +321,10 @@ export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload
 
   // 既有星空里的所有种子都要在场 —— 累积构建的前提
   const allSeedIds = [
-    ...new Set([...(existing?.starfield.seeds.map((s) => s.paperId.replace(/^paper:/, "")) ?? []), seedOaId]),
+    ...new Set([
+      ...(existing?.starfield.seeds.map((s) => s.paperId.replace(/^paper:/, "")) ?? []),
+      seedOaId,
+    ]),
   ];
 
   // ---------- 候选池 ----------
@@ -279,7 +348,6 @@ export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload
     if (report.keep) passed.push(w);
   }
 
-  // ---------- 去重 ----------
   const deduped = dedupe(passed).kept;
 
   /**
@@ -291,101 +359,207 @@ export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload
    */
   const poolCap = Math.max(20, Math.min(400, opts.budget ?? 160));
   const poolPapers = applyBudget(deduped, poolCap, new Set(allSeedIds));
-
-  /**
-   * 入图的是**结构核 ∪ 语义命中**,而不是整个邻域。
-   *
-   * 这是这次改造的核心:引文层退到"骨架"的位置(每个种子前后各三篇),
-   * 图上的其余论文必须靠一条被确认的关系挣得位置。
-   * 直接后果是画面上每一颗星都有理由在那儿,而不再是一大片"看起来相关"的散点。
-   */
   const poolById = new Map(poolPapers.map((w) => [w.id, w]));
+
   const core = selectCore(neighborhoods, poolById);
-
-  /**
-   * 判定的**中心**不只是种子,而是整个结构核。
-   *
-   * 只从种子向外找,图最多长到"种子 + 一圈"就停了 —— 实测 14 篇。
-   * 把结构核(种子的前后各三篇)一起当作中心之后,探索前沿变成了整个骨架,
-   * 语义关系才能一层层往外长。这也是"主体放在语义层"能否成立的关键:
-   * 引文层给出**从哪儿开始看**,语义层决定**能看到多远**。
-   */
-  const centers = [...new Set([...allSeedIds, ...core.map((w) => w.id)])];
-
-  // ---------- 语义关系(在候选池上判定,而不是在入图集合上) ----------
-  const { edges: semantic, report: relations } = await buildSemanticEdges(poolPapers, {
-    presets,
-    seedOaIds: allSeedIds,
-    centerOaIds: centers,
-    maxJudgedPerPreset: Math.max(4, Math.min(40, opts.judgeDepth ?? DEFAULT_JUDGE_DEPTH)),
-  });
-
-  const matchedIds = new Set<string>();
-  for (const e of semantic) {
-    matchedIds.add(e.source.replace(/^paper:/, ""));
-    matchedIds.add(e.target.replace(/^paper:/, ""));
-  }
-
-  const keepIds = new Set<string>([...core.map((w) => w.id), ...matchedIds]);
-  const papers = poolPapers.filter((w) => keepIds.has(w.id));
-  const finalIds = new Set(papers.map((w) => w.id));
-
-  // 只保留两端都在图里的语义边
-  const keptSemantic = semantic.filter(
-    (e) =>
-      finalIds.has(e.source.replace(/^paper:/, "")) && finalIds.has(e.target.replace(/^paper:/, "")),
-  );
-
-  // ---------- 建图 ----------
   const previous = previousStateFrom(existing);
-  const built = buildGraph(papers, allSeedIds, {
+
+  // ---------- 第一层:结构骨架 ----------
+  let papers = core;
+  let built = buildGraph(papers, allSeedIds, {
     anchorPaperId: seedOaId,
     previous: previous
       ? {
-          // 只保留仍然在场的节点的锚点:被预算裁掉的节点不该继续影响布局
-          layout: Object.fromEntries(
-            Object.entries(previous.layout).filter(([k]) => finalIds.has(k.replace(/^paper:/, ""))),
-          ),
-          communityOf: Object.fromEntries(
-            Object.entries(previous.communityOf).filter(([k]) =>
-              finalIds.has(k.replace(/^paper:/, "")),
-            ),
-          ),
+          layout: pickAnchors(previous.layout, papers),
+          communityOf: pickAnchors(previous.communityOf, papers),
         }
       : undefined,
   });
 
-  const graph = mergeSemanticEdges(built.graph, keptSemantic);
+  const seedWork = core.find((w) => w.id === seedOaId);
+  const starfield: Starfield = {
+    id: existing?.starfield.id ?? starfieldId(allSeedIds),
+    name: opts.name ?? existing?.starfield.name ?? seedWork?.title ?? "未命名星空",
+    ownerId: "local",
+    seeds: existing?.starfield.seeds ?? [],
+    createdAt: existing?.starfield.createdAt ?? new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    viewport: existing?.starfield.viewport ?? { x: 0, y: 0, scale: 1 },
+    stats: statsOf(built.graph),
+  };
 
-  // ---------- 星空元信息 ----------
-  const seedWork = papers.find((w) => w.id === seedOaId);
+  yield {
+    type: "structure",
+    starfield,
+    graph: built.graph,
+    layout: built.layout,
+    presets,
+  };
+
+  // ---------- 逐层扩展 ----------
+  const centers = new Set<string>([...allSeedIds, ...core.map((w) => w.id)]);
+  const judgedPairs = new Set<string>();
+  const relations = emptyReport();
+
+  /**
+   * 实时视图:管道在后台判定,这里同步地把它长出来的东西整理成一张可渲染的图。
+   *
+   * 为什么"边判边推"要经过一个队列而不是直接 yield:
+   * `buildSemanticEdges` 是普通异步函数,它的回调里没法 yield。
+   * 所以回调只负责把事件塞进队列并唤醒生成器,由生成器在事件循环里吐出去。
+   * 这样"流式"和"非流式"仍然是同一段判定代码,不会跑偏。
+   */
+  const live = {
+    papers: [...papers],
+    built,
+    edges: [] as GraphEdge[],
+    seen: new Set<string>(),
+  };
+  const queue: GrowEvent[] = [];
+  let wake: (() => void) | null = null;
+  let finished = false;
+
+  const publish = (event: GrowEvent): void => {
+    queue.push(event);
+    wake?.();
+    wake = null;
+  };
+
+  const absorb = (batch: GraphEdge[]): void => {
+    const fresh = new Set<string>();
+    for (const e of batch) {
+      if (!live.seen.has(e.id)) {
+        live.seen.add(e.id);
+        live.edges.push(e);
+      }
+      for (const id of [e.source, e.target]) {
+        const oa = id.replace(/^paper:/, "");
+        if (poolById.has(oa) && !live.papers.some((w) => w.id === oa)) fresh.add(oa);
+      }
+    }
+    if (!fresh.size) return;
+
+    live.papers = [
+      ...live.papers,
+      ...[...fresh].map((id) => poolById.get(id)).filter((w): w is OaWork => Boolean(w)),
+    ];
+    // 老节点的坐标作为锚点:新论文进来时,已有的星体只做微调
+    live.built = buildGraph(live.papers, allSeedIds, {
+      anchorPaperId: seedOaId,
+      previous: { layout: live.built.layout, communityOf: communityOfGraph(live.built.graph) },
+    });
+    publish({
+      type: "graph",
+      graph: mergeSemanticEdges(live.built.graph, live.edges),
+      layout: live.built.layout,
+    });
+  };
+
+  for (let round = 1; round <= depth; round++) {
+    finished = false;
+    const running = buildSemanticEdges(poolPapers, {
+      presets,
+      seedOaIds: allSeedIds,
+      centerOaIds: [...centers],
+      skipPairs: judgedPairs,
+      // 逐层收窄预算:第一层把主要关系找全,后续层只做补充
+      maxJudgedPerPreset: round === 1 ? judgeDepth : Math.max(4, Math.round(judgeDepth / 2)),
+      onEdges: absorb,
+    }).then((r) => {
+      finished = true;
+      wake?.();
+      wake = null;
+      return r;
+    });
+
+    while (!finished || queue.length) {
+      if (queue.length) {
+        const next = queue.shift();
+        if (next) yield next;
+        continue;
+      }
+      await new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+    }
+
+    const { edges, report } = await running;
+    sumReports(relations, report);
+
+    // 记录本轮判过的对,下一轮不再重复送审
+    for (const k of report.judgedPairs) judgedPairs.add(k);
+
+    // 本轮新加入的论文成为下一轮的探索中心
+    const added = new Set<string>();
+    for (const e of edges) {
+      for (const id of [e.source, e.target]) {
+        const oa = id.replace(/^paper:/, "");
+        if (poolById.has(oa)) added.add(oa);
+      }
+    }
+    const before = centers.size;
+    for (const id of added) centers.add(id);
+
+    papers = live.papers;
+    built = live.built;
+
+    yield {
+      type: "progress",
+      round,
+      depth,
+      judged: Object.values(relations.perPreset).reduce((s, v) => s + v.judged, 0),
+      matched: Object.values(relations.perPreset).reduce((s, v) => s + v.matched, 0),
+      llmCalls: relations.llmCalls,
+      estimatedTokens: relations.estimatedTokens,
+    };
+
+    // 这一轮没有发现新的中心,再往外也长不出东西了
+    if (centers.size === before) break;
+  }
+
+  const allSemantic = live.edges;
+
+  // ---------- 收尾 ----------
+  /**
+   * 最终布局重新算一次,不沿用流式过程中的中间态。
+   *
+   * 流式快照是**近似**的:每来一批判定就增量松弛一次,中间态会累积漂移
+   * (实测表现为大部分星体挤在右侧、两颗被推到很远,整个包围盒被两个离群点撑大)。
+   * 中间态用来"看着它长出来"没问题,但作为最终结果就不可接受了。
+   *
+   * 所以:新星空用完整的两阶段布局(最整齐);并入已有星空时用老坐标做锚点,
+   * 兑现"老星体留在原地"的承诺。
+   */
+  built = buildGraph(papers, allSeedIds, {
+    anchorPaperId: seedOaId,
+    previous: previous
+      ? {
+          layout: pickAnchors(previous.layout, papers),
+          communityOf: pickAnchors(previous.communityOf, papers),
+        }
+      : undefined,
+  });
+
+  const graph = mergeSemanticEdges(built.graph, allSemantic);
   const previousPaperCount = existing?.starfield.stats.papers ?? 0;
+  const addedPapers = Math.max(0, graph.stats.papers - previousPaperCount);
 
   const seedEntry: SeedEntry = {
-    query: existing ? (seedWork?.title ?? seedOaId) : (seedWork?.title ?? seedOaId),
+    query: workOf(papers, seedOaId)?.title ?? seedOaId,
     paperId: `paper:${seedOaId}`,
     addedAt: new Date().toISOString(),
-    addedPapers: Math.max(0, graph.stats.papers - previousPaperCount),
+    addedPapers,
   };
 
   const seeds = [...(existing?.starfield.seeds ?? []), seedEntry].filter(
     (s, i, arr) => arr.findIndex((x) => x.paperId === s.paperId) === i,
   );
 
-  const starfield: Starfield = {
-    id: existing?.starfield.id ?? starfieldId(allSeedIds),
-    name: opts.name ?? existing?.starfield.name ?? seedWork?.title ?? "未命名星空",
-    ownerId: "local",
+  const finalStarfield: Starfield = {
+    ...starfield,
     seeds,
-    createdAt: existing?.starfield.createdAt ?? new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    viewport: existing?.starfield.viewport ?? { x: 0, y: 0, scale: 1 },
-    stats: {
-      papers: graph.stats.papers,
-      edges: graph.stats.edges,
-      communities: graph.stats.communities,
-      domains: graph.stats.domains,
-    },
+    stats: statsOf(graph),
   };
 
   const meta: BuildMeta = {
@@ -394,11 +568,11 @@ export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload
     capabilities: capabilityReport(),
     builtAt: new Date().toISOString(),
     durationMs: Date.now() - started,
-    addedPapers: seedEntry.addedPapers,
+    addedPapers,
   };
 
   const payload: StarfieldPayload = {
-    starfield,
+    starfield: finalStarfield,
     graph,
     layout: built.layout,
     presets,
@@ -406,5 +580,47 @@ export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload
   };
 
   await saveStarfield(payload);
+  yield { type: "done", payload };
+}
+
+/** 消费事件流并返回最终载荷。非流式接口用它,保证与流式走同一段代码。 */
+export async function growStarfield(opts: GrowOptions): Promise<StarfieldPayload> {
+  let payload: StarfieldPayload | null = null;
+  for await (const event of growStarfieldStream(opts)) {
+    if (event.type === "done") payload = event.payload;
+  }
+  if (!payload) throw new Error("构建未产出结果");
   return payload;
+}
+
+export { growStarfieldStream };
+
+/** 按给定论文集合裁剪锚点:被裁掉的节点不该继续影响布局。 */
+function pickAnchors<T>(map: Record<string, T>, papers: OaWork[]): Record<string, T> {
+  const keep = new Set(papers.map((w) => `paper:${w.id}`));
+  return Object.fromEntries(Object.entries(map).filter(([k]) => keep.has(k)));
+}
+
+function communityOfGraph(graph: Graph): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const edge of graph.edges) {
+    if (edge.kind === "BELONGS_TO" && edge.source.startsWith("paper:")) {
+      const idx = Number(edge.target.replace("community:", ""));
+      if (Number.isFinite(idx)) out[edge.source] = idx;
+    }
+  }
+  return out;
+}
+
+function statsOf(graph: Graph) {
+  return {
+    papers: graph.stats.papers,
+    edges: graph.stats.edges,
+    communities: graph.stats.communities,
+    domains: graph.stats.domains,
+  };
+}
+
+function workOf(papers: OaWork[], id: string): OaWork | undefined {
+  return papers.find((w) => w.id === id);
 }

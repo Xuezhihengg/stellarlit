@@ -8,6 +8,8 @@ interface BuildStatusProps {
   /** 步骤序号(从 1 开始),用于让等待有进度感 */
   step?: number;
   total?: number;
+  /** 实时细节:第几层、判定了多少对、找到多少条关系 */
+  detail?: string;
 }
 
 /**
@@ -17,7 +19,7 @@ interface BuildStatusProps {
  * 用户不知道系统在做什么,就会怀疑它卡住了。
  * 所以这里既说明**当前在做什么**,也用秒表让对方知道它确实在动。
  */
-export function BuildStatus({ label, step = 1, total = 4 }: BuildStatusProps) {
+export function BuildStatus({ label, step = 1, total = 4, detail }: BuildStatusProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -45,7 +47,8 @@ export function BuildStatus({ label, step = 1, total = 4 }: BuildStatusProps) {
       </div>
 
       <p className="text-[10.5px] leading-relaxed text-ink-4">
-        正在抓取引文邻域、聚类研究前沿、计算布局。结果会缓存,同一片星空再次打开是瞬时的。
+        {detail ??
+          "正在抓取引文邻域、聚类研究前沿、计算布局。结果会缓存,同一片星空再次打开是瞬时的。"}
       </p>
     </div>
   );

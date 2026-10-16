@@ -37,6 +37,7 @@ export function AssistantRail({
   const error = useStarfieldStore((s) => s.error);
   const selectedId = useStarfieldStore((s) => s.selectedId);
   const capabilities = useStarfieldStore((s) => s.capabilities);
+  const streamProgress = useStarfieldStore((s) => s.streamProgress);
   const setQuery = useStarfieldStore((s) => s.setQuery);
   const search = useStarfieldStore((s) => s.search);
   const grow = useStarfieldStore((s) => s.grow);
@@ -122,7 +123,16 @@ export function AssistantRail({
         ) : null}
 
         {phase === "growing" || phase === "resolving" ? (
-          <BuildStatus label={buildLabel} step={phase === "growing" ? 3 : 1} total={4} />
+          <BuildStatus
+            label={buildLabel}
+            step={phase === "growing" ? 3 : 1}
+            total={4}
+            detail={
+              streamProgress
+                ? `第 ${streamProgress.round}/${streamProgress.depth} 层 · 已判定 ${streamProgress.judged} 对论文 · 找到 ${streamProgress.matched} 条关系 · ${streamProgress.llmCalls} 次模型调用`
+                : undefined
+            }
+          />
         ) : phase === "confirming" ? (
           <SeedConfirm
             candidates={candidates}

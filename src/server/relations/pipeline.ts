@@ -49,6 +49,19 @@ const JUDGE_CONCURRENCY = 4;
  */
 const JUDGE_BATCH = 5;
 
+/**
+ * 送进提示词的摘要长度上限。
+ *
+ * 从 700 压到 400 的依据:论文摘要的第一段几乎总是"问题 + 方法 + 结果",
+ * 而后面主要是实验细节与罗列 —— 判断"这两篇是什么关系"用不到那些。
+ * 批量判定时这一项是输入 token 的主要来源(每批 5 对 = 10 段摘要),
+ * 砍掉 43% 直接反映在账单上,而判定质量在实测里没有可感知的变化。
+ *
+ * 逐条判定走同一个常量,保证两种路径看到的信息一致 ——
+ * 否则批处理失败退回逐条时,结论会莫名地不一样。
+ */
+const ABSTRACT_CHARS = 400;
+
 /** 组装一条语义边。把构造逻辑收在一处,是因为它同时约束了三件事:层的归属、证据的不变式、溯源信息。 */
 function makeEdge(
   preset: RelationPreset,
@@ -92,6 +105,12 @@ export interface RelationReport {
   cacheHits: number;
   /** 整批解析失败、退回逐条判定的次数 */
   batchFallbacks: number;
+  /**
+   * 本轮实际判定过的论文对(键 `${idA}|${idB}`,无序)。
+   * 传递扩展靠它把上一轮判过的排除掉 —— 否则下一轮的排序结果
+   * 会和上一轮几乎重合,新的一层什么也长不出来。
+   */
+  judgedPairs: string[];
 }
 
 /** 一对论文的判定结论。缓存与批处理共用这个形状。 */
@@ -464,7 +483,7 @@ export function pairPrompt(f: PairFeatures, a: OaWork, b: OaWork, preset: Relati
       `年份: ${w.year}`,
       w.venue ? `发表: ${w.venue}` : null,
       `被引: ${w.citedByCount}`,
-      `摘要: ${(w.abstract ?? "(无摘要)").slice(0, 1200)}`,
+      `摘要: ${(w.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS * 2)}`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -516,6 +535,17 @@ export interface RelationPipelineOptions {
    * 只给种子,图就是种子加一圈;把结构核一起放进来,才谈得上语义层当主体。
    */
   centerOaIds?: string[];
+  /**
+   * 已经判过的论文对(键为 `${i}|${j}`,与方向无关)。传递扩展用它去重:
+   * 第二轮的中心集合包含第一轮的全部成员,不排掉旧对的话,
+   * 排在前面的永远是同一批人,新的一轮什么也长不出来。
+   */
+  skipPairs?: ReadonlySet<string>;
+  /**
+   * 每判定完一批就回调一次。流式返回靠它把结论逐条推给前端,
+   * 顺带也让"判定到哪一步了"能被观测到。
+   */
+  onEdges?: (edges: GraphEdge[]) => void;
   onProgress?: (msg: string) => void;
 }
 
@@ -529,6 +559,8 @@ export async function buildSemanticEdges(
     maxJudgedPerPreset = 12,
     seedOaIds = [],
     centerOaIds = seedOaIds,
+    skipPairs,
+    onEdges,
   } = opts;
   /**
    * 排序用的文本索引。
@@ -550,6 +582,7 @@ export async function buildSemanticEdges(
     estimatedTokens: 0,
     cacheHits: 0,
     batchFallbacks: 0,
+    judgedPairs: [],
   };
   const perSeedCount = new Map<string, number>();
 
@@ -585,6 +618,12 @@ export async function buildSemanticEdges(
     });
 
     const ranked = centerRelated
+      .filter((f) => {
+        if (!skipPairs?.size) return true;
+        const a = papers[f.i];
+        const b = papers[f.j];
+        return !a || !b || !skipPairs.has(`${a.id}|${b.id}`);
+      })
       .map((f) => ({ f, s: heuristicScore(f, preset) }))
       .sort((x, y) => y.s - x.s)
       .slice(0, candidateLimit);
@@ -592,6 +631,7 @@ export async function buildSemanticEdges(
     let judgedCount = 0;
     let matchedTotal = 0;
     let cursor = 0;
+    const batchEdges: GraphEdge[] = [];
     const chunkSize = JUDGE_BATCH * JUDGE_CONCURRENCY;
 
     while (cursor < ranked.length) {
@@ -634,6 +674,7 @@ export async function buildSemanticEdges(
         if ((perSeedCount.get(quotaKey) ?? 0) >= preset.maxPerSeed) continue;
 
         prepared.push({ f, s, a, b, quotaKey });
+        report.judgedPairs.push(a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`);
       }
       if (!prepared.length) continue;
 
@@ -703,9 +744,16 @@ export async function buildSemanticEdges(
         if (!edge) continue;
 
         edges.push(edge);
+        batchEdges.push(edge);
         perSeedCount.set(p.quotaKey, (perSeedCount.get(p.quotaKey) ?? 0) + 1);
         report.perPreset[preset.id]!.matched++;
         matchedTotal++;
+      }
+
+      // 一批判完就把它推出去 —— 流式返回靠这个"边判边亮"
+      if (batchEdges.length) {
+        onEdges?.(batchEdges);
+        batchEdges.length = 0;
       }
     }
   }
@@ -780,9 +828,9 @@ function batchPrompt(preset: RelationPreset, items: PreparedPair[]): string {
       p.f.sharedTopics.length ? p.f.sharedTopics.join(", ") : "(无)"
     }
 A) ${p.a.id} · ${p.a.year} · ${p.a.title}
-   摘要: ${(p.a.abstract ?? "(无摘要)").slice(0, 700)}
+   摘要: ${(p.a.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS)}
 B) ${p.b.id} · ${p.b.year} · ${p.b.title}
-   摘要: ${(p.b.abstract ?? "(无摘要)").slice(0, 700)}`;
+   摘要: ${(p.b.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS)}`;
   });
 
   return `## 关系类型:${preset.label}(${preset.labelEn})

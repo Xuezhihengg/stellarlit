@@ -13,7 +13,8 @@ import type {
   ResolveSeedResponse,
   StarfieldPayload,
 } from "@/types/api";
-import type { RelationPreset } from "@/types/kg";
+import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
+import type { Starfield } from "@/types/starfield";
 
 /** 带可行动提示的错误。界面直接展示 message 与 hint。 */
 export class ApiRequestError extends Error {
@@ -95,6 +96,131 @@ export function growStarfield(req: GrowRequest) {
     method: "POST",
     body: JSON.stringify(req),
   });
+}
+
+// ---------------------------------------------------------------------------
+// 流式构建
+// ---------------------------------------------------------------------------
+
+export interface GrowStreamHandlers {
+  /** 结构骨架就绪(通常一秒内) */
+  onStructure: (e: { starfield: Starfield; graph: Graph; layout: GraphLayout }) => void;
+  /** 又长出了新论文:整张图的最新快照 */
+  onGraph: (e: { graph: Graph; layout: GraphLayout }) => void;
+  onProgress: (e: {
+    round: number;
+    depth: number;
+    judged: number;
+    matched: number;
+    llmCalls: number;
+    estimatedTokens: number;
+  }) => void;
+  onDone: (payload: StarfieldPayload) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * 流式构建星空。
+ *
+ * 用手写 fetch + ReadableStream 而不是 EventSource:EventSource 只能发 GET,
+ * 而构建参数是一段结构化请求体。SSE 的分帧规则很简单(空行分隔、`data: ` 前缀),
+ * 自己解析比引入一个依赖划算 —— 也能顺手处理"最后一帧没收完就断流"的情况,
+ * 那正是移动网络下最常见的一种失败。
+ */
+export async function growStarfieldStream(
+  req: GrowRequest,
+  handlers: GrowStreamHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch("/api/starfield/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(req),
+      signal,
+    });
+  } catch {
+    handlers.onError("无法连接到服务端");
+    return;
+  }
+
+  if (!res.ok || !res.body) {
+    const err = (await res.json().catch(() => ({}))) as ApiError;
+    handlers.onError(err.error ?? `请求失败(${res.status})`);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep = buffer.indexOf("\n\n");
+      while (sep >= 0) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        sep = buffer.indexOf("\n\n");
+
+        const line = frame.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+
+        let event: Record<string, unknown>;
+        try {
+          event = JSON.parse(line.slice(6)) as Record<string, unknown>;
+        } catch {
+          continue; // 半截帧:丢掉,不打断整个流
+        }
+        dispatchEvent(event, handlers);
+      }
+    }
+  } catch {
+    // 用户主动取消不算错误
+    if (!signal?.aborted) handlers.onError("连接中断,已保留当前进度");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function dispatchEvent(
+  event: Record<string, unknown>,
+  handlers: GrowStreamHandlers,
+): void {
+  switch (event.type) {
+    case "structure":
+      handlers.onStructure(
+        event as unknown as { starfield: Starfield; graph: Graph; layout: GraphLayout },
+      );
+      break;
+    case "graph":
+      handlers.onGraph(event as unknown as { graph: Graph; layout: GraphLayout });
+      break;
+    case "progress":
+      handlers.onProgress(
+        event as unknown as {
+          round: number;
+          depth: number;
+          judged: number;
+          matched: number;
+          llmCalls: number;
+          estimatedTokens: number;
+        },
+      );
+      break;
+    case "done":
+      handlers.onDone((event as unknown as { payload: StarfieldPayload }).payload);
+      break;
+    case "error":
+      handlers.onError(String(event.message ?? "构建失败"));
+      break;
+    default:
+      break;
+  }
 }
 
 export function getStarfield(id: string) {

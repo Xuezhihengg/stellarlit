@@ -217,6 +217,15 @@ export function alignLabels(previous: number[], next: number[]): number[] {
     const oldL = previous[i];
     const newL = next[i];
     if (oldL === undefined || newL === undefined) continue;
+    /**
+     * `-1` 表示"这篇论文上一轮还不在图里",它不是社区号。
+     *
+     * 不排掉它的后果很隐蔽:贪心匹配会把 `-1` 当成一个真实的老社区,
+     * 于是**部分新社区被赋予编号 -1**。下游按编号取成员数组时
+     * `members[-1]` 是 undefined,那些论文就被静默跳过 ——
+     * 表现为领域与前沿全部消失(0 FRONTIERS),而节点数和边数看起来完全正常。
+     */
+    if (oldL < 0) continue;
     const k = `${newL}|${oldL}`;
     overlap.set(k, (overlap.get(k) ?? 0) + 1);
     nextSizes.set(newL, (nextSizes.get(newL) ?? 0) + 1);
@@ -242,7 +251,8 @@ export function alignLabels(previous: number[], next: number[]): number[] {
   let fresh = 0;
   while (usedOld.has(fresh)) fresh++;
 
-  const maxOld = previous.reduce((m, l) => Math.max(m, l), -1);
+  // -1 不是社区号,不能参与"下一个可用编号"的推算
+  const maxOld = previous.reduce((m, l) => (l > m ? l : m), -1);
   let nextFresh = Math.max(fresh, maxOld + 1);
 
   return next.map((l) => {

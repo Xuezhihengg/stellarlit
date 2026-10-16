@@ -81,6 +81,8 @@ export interface GrowRequest {
   pool?: number;
   /** 每类关系送审多少对候选 —— 直接决定模型成本与语义图的稠密程度 */
   judgeDepth?: number;
+  /** 传递扩展层数:命中的论文成为下一轮探索中心 */
+  depth?: number;
   /**
    * 关系预设覆盖。
    *

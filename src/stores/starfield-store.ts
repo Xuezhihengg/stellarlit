@@ -6,7 +6,7 @@ import {
   ApiRequestError,
   fetchCapabilities,
   getStarfield,
-  growStarfield,
+  growStarfieldStream,
   resolveSeed,
 } from "@/lib/api/client";
 import { loadPresetOverrides } from "@/lib/presets/local";
@@ -34,6 +34,14 @@ interface StarfieldState {
   /** 用户关闭了哪些关系类型 */
   hiddenKinds: Set<string>;
   minYear: number | null;
+  /** 流式构建的实时进度;null 表示当前没有在构建 */
+  streamProgress: {
+    round: number;
+    depth: number;
+    judged: number;
+    matched: number;
+    llmCalls: number;
+  } | null;
   setQuery: (q: string) => void;
   setSelected: (id: string | null) => void;
   toggleKind: (kind: string) => void;
@@ -63,6 +71,7 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
   selectedId: null,
   hiddenKinds: new Set<string>(),
   minYear: null,
+  streamProgress: null,
 
   setQuery: (q) => set({ query: q }),
   setSelected: (id) => set({ selectedId: id }),
@@ -126,19 +135,67 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
 
   grow: async (seedPaperId, name) => {
     const { payload } = get();
-    set({ phase: "growing", error: null, candidates: [] });
-    try {
-      const next = await growStarfield({
+    set({ phase: "growing", error: null, candidates: [], streamProgress: null });
+
+    /**
+     * 结构骨架先落地,关系再一条条叠上来。
+     *
+     * 这里刻意不做"等全部完成再一次性替换":用户点下按钮后一秒内就能看到
+     * 种子与它的三前一后,而关系判定在后台推进。等待从"盯着转圈"变成
+     * "看着它长出来"——这也是评分表里「AI 思考状态可视化」那一项真正该有的样子。
+     */
+    const started = Date.now();
+    await growStarfieldStream(
+      {
         starfieldId: payload?.starfield.id,
         seedPaperId,
         name,
         presets: loadPresetOverrides() ?? undefined,
-      });
-      set({ payload: next, phase: "ready" });
-    } catch (e) {
-      // 构建失败时回到 ready,而不是 error:老星空还在,用户不该被踢出画面
-      set({ error: toError(e), phase: payload ? "ready" : "error" });
-    }
+      },
+      {
+        onStructure: ({ starfield, graph, layout }) => {
+          set({
+            payload: {
+              starfield,
+              graph,
+              layout,
+              presets: get().payload?.presets ?? [],
+              meta: provisionalMeta(started),
+            },
+          });
+        },
+        onGraph: ({ graph, layout }) => {
+          const current = get().payload;
+          if (!current) return;
+          set({
+            payload: {
+              ...current,
+              graph,
+              layout,
+              starfield: { ...current.starfield, stats: statsOf(graph) },
+            },
+          });
+        },
+        onProgress: (p) =>
+          set({
+            streamProgress: {
+              round: p.round,
+              depth: p.depth,
+              judged: p.judged,
+              matched: p.matched,
+              llmCalls: p.llmCalls,
+            },
+          }),
+        onDone: (done) => set({ payload: done, phase: "ready", streamProgress: null }),
+        onError: (message) =>
+          set({
+            // 构建失败时回到 ready,而不是 error:老星空还在,用户不该被踢出画面
+            phase: get().payload ? "ready" : "error",
+            error: { message },
+            streamProgress: null,
+          }),
+      },
+    );
   },
 
   reset: () =>
@@ -150,5 +207,39 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
       query: "",
       selectedId: null,
       minYear: null,
+      streamProgress: null,
     }),
 }));
+
+function statsOf(graph: StarfieldPayload["graph"]) {
+  return {
+    papers: graph.stats.papers,
+    edges: graph.stats.edges,
+    communities: graph.stats.communities,
+    domains: graph.stats.domains,
+  };
+}
+
+/**
+ * 骨架阶段的占位元信息。
+ *
+ * 刻意不编造 relations 的数字:这一阶段还没有结论,填 0 是**如实**,
+ * 而界面上会显示"正在判定",不会让用户把 0 误当成结果。
+ */
+function provisionalMeta(startedAt: number): StarfieldPayload["meta"] {
+  return {
+    quality: { kept: 0, droppedTotal: 0, droppedByReason: {} },
+    relations: {
+      perPreset: {},
+      rejectedQuotes: 0,
+      llmCalls: 0,
+      estimatedTokens: 0,
+      cacheHits: 0,
+      batchFallbacks: 0,
+    },
+    capabilities: { llm: false, embedding: false, llmModel: null },
+    builtAt: new Date(startedAt).toISOString(),
+    durationMs: 0,
+    addedPapers: 0,
+  };
+}

@@ -870,27 +870,37 @@ function drawLabels(
       if (c.x < 60 || c.x > width - 60 || c.y < 40 || c.y > height - 40) continue;
 
       const focus = n.id === anim.focusId ? anim.focus : 0;
-      const isKey = n.seed || n.hovered || focus > 0.01;
+
+      /**
+       * "重点态"的浓度:0 = 普通标签,1 = 重点标签。
+       *
+       * 这里原来是布尔量 `n.seed || n.hovered || focus > 0.01` —— 而 focus
+       * 一旦超过 0.01 它就从 false 翻成 true,于是字号(10.5→12)与
+       * 透明度(0.55→0.95)**瞬间**跳到重点态,动画再从那个大号字开始演。
+       * 用户看到的就是"先冒出一个较大的标题,再开始动效"。
+       *
+       * 改成连续量之后,焦点从 0 涨到 1 的过程中,字号与透明度同步过渡,
+       * 起点正好是常规状态,终点才是重点态。
+       */
+      const keyLevel = n.seed ? 1 : n.hovered ? 1 : 1 - (1 - focus) * (1 - focus);
+      const isKey = keyLevel > 0.5;
       const text = truncate(n.label, isKey ? 52 : 30);
       const r = Math.max(2.5, n.r * camera.scale);
       /**
-       * 选中 = 在**常态之上的增量**,不是从零开始的另一套状态。
+       * 字号与透明度都由 keyLevel 连续插值:
+       *   keyLevel = 0 → 10.5px / 0.40  (常规标签,与选中无关时一模一样)
+       *   keyLevel = 1 → 12.0px / 0.95  (重点态)
+       * 再乘一个由焦点驱动的缩放(1 → 1.16),那是"选中"本身的动作。
        *
-       * 上一版把透明度乘了 focus,于是取消选中时它会一路淡到 0,
-       * 等 focus 归零、焦点释放之后又跳回常态亮度 —— 用户看到的就是
-       * "先完全消失,再冒出一个完整标题"。字号同理:终点定在 0.82 而
-       * 常态是 1,收尾那一帧也会跳一下。
-       *
-       * 现在的两个量都以 1 为基准做加法:f=0 时完全等于常态,
-       * f=1 时才是放大后的样子。整条曲线单调、连续,两端都不跳。
+       * 颜色统一用 p.ink,靠透明度表达明暗 —— 之前按阈值在 ink2/ink 之间
+       * 切换,那个切换本身也是一次跳变。
        */
-      const ease = 1 - (1 - focus) * (1 - focus);
-      const scaleIn = 1 + 0.16 * ease;
-      const base = isKey ? 12 : 10.5;
+      const scaleIn = 1 + 0.16 * (1 - (1 - focus) * (1 - focus));
+      const fontPx = (10.5 + 1.5 * keyLevel) * scaleIn;
 
-      ctx.font = `${(base * scaleIn).toFixed(1)}px ${SANS}`;
-      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel * (1 + 0.35 * ease);
-      ctx.fillStyle = focus > 0.01 ? p.ink : p.ink2;
+      ctx.font = `${fontPx.toFixed(1)}px ${SANS}`;
+      ctx.globalAlpha = (0.4 + 0.55 * keyLevel) * a.paperLabel;
+      ctx.fillStyle = p.ink;
 
       // 标签压在星体上会互相干扰,统一挪到星体下方
       ctx.fillText(text, c.x, c.y + r + 13);

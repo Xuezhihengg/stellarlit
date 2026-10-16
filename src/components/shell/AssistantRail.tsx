@@ -53,7 +53,8 @@ export function AssistantRail({
   const busy = phase === "resolving" || phase === "growing";
 
   return (
-    <aside
+    <>
+      <aside
       /**
        * 浮窗而不是吸附面板。
        *
@@ -90,22 +91,6 @@ export function AssistantRail({
               {capabilities.llm ? "模型已连接" : "启发式模式"}
             </span>
           ) : null}
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            aria-label="收起侧栏"
-            className="grid h-5 w-5 place-items-center rounded text-ink-4 transition-colors hover:text-ink-2"
-          >
-            <svg width="11" height="11" viewBox="0 0 11 11" aria-hidden="true">
-              <path
-                d="M4 1.8 L8.2 5.5 L4 9.2"
-                stroke="currentColor"
-                strokeWidth="1.2"
-                fill="none"
-                strokeLinecap="round"
-              />
-            </svg>
-          </button>
         </div>
       </header>
 
@@ -186,7 +171,48 @@ export function AssistantRail({
           </div>
         </footer>
       ) : null}
-    </aside>
+      </aside>
+
+      {/*
+      开关固定在**侧栏左边缘**上,而不是跟着侧栏一起滑走。
+
+      两个状态用同一个屏幕锚点:开着时它骑在侧栏边界线上(一半压着面板、
+      一半浮在星空上),收起后停在屏幕右缘 —— 位置几乎没变,
+      所以用户不需要重新找它。这也让"打开/收起"读起来像同一个动作的往复,
+      而不是两个不同的按钮。这里刻意不放进 <aside> 里:一旦放进去,
+      它就会跟着面板一起滑出屏幕,收起后就再也点不开了。
+    */}
+    <button
+      type="button"
+      onClick={onToggleCollapse}
+      aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
+      aria-expanded={!collapsed}
+      className="group fixed top-1/2 z-40 flex h-14 w-[22px] items-center justify-center rounded-full border border-hair-2 bg-bg/85 backdrop-blur-md transition-[right,background-color,border-color] duration-[--dur-base] hover:border-ink-4 hover:bg-bg"
+      style={{
+        right: collapsed ? 18 : 384,
+        transform: collapsed ? "translate(0, -50%)" : "translate(50%, -50%)",
+        transitionTimingFunction: "var(--ease-out)",
+      }}
+    >
+      <svg
+        width="10"
+        height="10"
+        viewBox="0 0 10 10"
+        aria-hidden="true"
+        className={`transition-transform duration-[--dur-base] ${collapsed ? "rotate-180" : ""}`}
+        style={{ transitionTimingFunction: "var(--ease-out)" }}
+      >
+        <path
+          d="M6.4 1.6 L2.6 5 L6.4 8.4"
+          stroke="currentColor"
+          strokeWidth="1.2"
+          fill="none"
+          strokeLinecap="round"
+          className="text-ink-3 transition-colors group-hover:text-ink-2"
+        />
+      </svg>
+      </button>
+    </>
   );
 }
 

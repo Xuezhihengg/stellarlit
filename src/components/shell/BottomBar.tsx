@@ -54,16 +54,7 @@ export function BottomBar({
           刻度间距固定 52px,所以轴线与高亮段都用**像素**算,
           不用百分比 —— 百分比会在刻度数变化时对不齐。
         */}
-        <div className="pointer-events-auto relative">
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute -inset-x-12 -inset-y-9 -z-10"
-            style={{
-              background:
-                "radial-gradient(72% 120% at 20% 55%, var(--bg) 0%, var(--bg) 30%, transparent 100%)",
-            }}
-          />
-
+        <div className="pointer-events-auto">
           <div className="flex items-end gap-7">
             <button
               type="button"

@@ -129,22 +129,6 @@ export default function StarfieldPage() {
         buildLabel={buildLabel}
       />
 
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          aria-label="展开侧栏"
-          className="group fixed top-1/2 right-0 z-30 -translate-y-1/2 rounded-l-lg border border-r-0 border-hair-2 bg-bg/85 px-1.5 py-5 backdrop-blur-sm"
-        >
-          <span className="flex flex-col items-center gap-2">
-            <span className="[writing-mode:vertical-rl] text-[10.5px] tracking-[0.16em] text-ink-3 transition-colors group-hover:text-accent">
-              研究助手
-            </span>
-            <span className="h-1 w-1 rounded-full bg-accent" />
-          </span>
-        </button>
-      ) : null}
-
       <BottomBar
         payload={payload}
         minYear={minYear}

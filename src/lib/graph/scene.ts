@@ -98,6 +98,18 @@ export interface SceneEdge {
   active: boolean;
   /** 所属关系类型被关掉:淡出,但保留在画面上 */
   faded: boolean;
+  /** 关系类型的中文名,画在边旁边 */
+  label: string;
+  /**
+   * 这一对论文之间**全部**关系的类型名。
+   *
+   * 同一对论文可能同时满足多种关系(既同期、又同任务异方法)。
+   * 早期版本把每条关系各画一条线,结果两篇论文之间叠着三根几乎重合的曲线,
+   * 看起来像画错了。现在的做法是:一对论文只画**一条**边,
+   * 把关系类型合并成标签写在边上 —— 线的数量表达"有多少对相关",
+   * 标签表达"怎么相关"。
+   */
+  kinds: string[];
 }
 
 export interface SceneBlob {
@@ -166,6 +178,19 @@ const EDGE_TONE: Record<string, EdgeToneKey> = {
   CONTEMPORARY_OF: "ink3",
   CONTRADICTS: "alert",
   POTENTIAL_LINK: "warm",
+};
+
+/** 关系类型的中文名。写在边上,让"这条线是什么意思"不需要去对照图例。 */
+const EDGE_LABEL: Record<string, string> = {
+  CITES: "引用",
+  BASELINE_OF: "基线",
+  CONTEMPORARY_OF: "同期",
+  SIMILAR_APPROACH: "思路类似",
+  ALTERNATIVE_TO: "同任务异方法",
+  EXTENDS: "扩展",
+  CONTRADICTS: "结论矛盾",
+  POTENTIAL_LINK: "潜在连接",
+  SEMANTIC_NEIGHBOR: "语义近邻",
 };
 
 const EDGE_DASH: Record<string, number[] | null> = {
@@ -361,34 +386,70 @@ export function buildScene(
   if (selectedId) activeIds.add(selectedId);
   if (hoveredId) activeIds.add(hoveredId);
 
+  /**
+   * 一对论文只保留一条边。
+   *
+   * 冲突时的取舍:语义边优先于引用边 —— 引用是骨架,到处都有;
+   * 语义是结论,稀有且是用户真正要看的。同层之间保留置信度更高的那条,
+   * 但**所有**被合并的关系名都会写进 kinds,标签上一个都不会丢。
+   */
+  const byPair = new Map<string, SceneEdge>();
+
   for (const e of graph.edges) {
     if (e.kind === "BELONGS_TO" || e.kind === "PART_OF" || e.kind === "HAS_CHUNK") continue;
-    const faded = Boolean(dimmedKinds?.has(e.kind));
 
     const a = index.get(e.source);
     const b = index.get(e.target);
-    if (a === undefined || b === undefined) continue;
+    if (a === undefined || b === undefined || a === b) continue;
 
     const na = nodes[a];
     const nb = nodes[b];
     // 时间轴过滤:两端都被筛掉才隐藏,一端留下的边仍然有意义
     if (na?.dimmed && nb?.dimmed) continue;
 
-    edges.push({
+    const key = `${Math.min(a, b)}|${Math.max(a, b)}`;
+    const layer: "structural" | "semantic" = e.layer === "semantic" ? "semantic" : "structural";
+    const candidate: SceneEdge = {
       id: e.id,
       kind: e.kind,
-      layer: e.layer,
-      a,
-      b,
+      layer,
+      a: Math.min(a, b),
+      b: Math.max(a, b),
       directed: e.directed,
       weight: e.weight,
       confidence: e.confidence,
       tone: EDGE_TONE[e.kind] ?? "ink4",
       dash: EDGE_DASH[e.kind] ?? null,
       active: activeIds.size > 0 && (activeIds.has(e.source) || activeIds.has(e.target)),
-      faded,
+      faded: Boolean(dimmedKinds?.has(e.kind)),
+      label: EDGE_LABEL[e.kind] ?? e.kind,
+      kinds: [EDGE_LABEL[e.kind] ?? e.kind],
+    };
+
+    const prev = byPair.get(key);
+    if (!prev) {
+      byPair.set(key, candidate);
+      continue;
+    }
+
+    // 合并:语义优先,其次比置信度
+    const preferNew =
+      (candidate.layer === "semantic" && prev.layer === "structural") ||
+      (candidate.layer === prev.layer && candidate.confidence > prev.confidence);
+
+    const mergedKinds = [...new Set([...prev.kinds, ...candidate.kinds])];
+    const winner = preferNew ? candidate : prev;
+    byPair.set(key, {
+      ...winner,
+      kinds: mergedKinds,
+      label: mergedKinds.join(" · "),
+      // 只要有一个关系没被关掉,这条边就仍然算"可见"
+      faded: prev.faded && candidate.faded,
+      active: prev.active || candidate.active,
     });
   }
+
+  edges.push(...byPair.values());
 
   return {
     nodes,

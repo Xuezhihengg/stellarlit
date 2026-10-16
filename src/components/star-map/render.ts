@@ -17,6 +17,59 @@ import type { Scene, SceneBlob } from "@/lib/graph/scene";
 import type { Theme } from "@/hooks/use-theme";
 import type { ViewLevel } from "@/types/starfield";
 
+/**
+ * 逐帧动画状态。
+ *
+ * 为什么需要它:淡出、出现、选中入场都是**过程**,不是状态。
+ * 直接把"当前是否筛掉"塞进颜色里,效果是一帧跳变 —— 用户看到的是
+ * "闪了一下",而不是"淡出了"。这里给每个节点与每条边一个当前不透明度,
+ * 每帧朝目标值逼近一点,于是所有的显示/隐藏/高亮都自然变成过渡。
+ *
+ * 状态放在渲染层而不是场景层:场景是数据的投影(纯函数、可复算),
+ * 而"正在淡到多少"是纯粹的视觉过程,重建场景时不该被重置。
+ */
+export interface AnimState {
+  nodeAlpha: Map<string, number>;
+  edgeAlpha: Map<string, number>;
+  /** 选中项的入场进度 0→1 */
+  focus: number;
+  focusId: string | null;
+}
+
+export function createAnimState(): AnimState {
+  return { nodeAlpha: new Map(), edgeAlpha: new Map(), focus: 0, focusId: null };
+}
+
+/** 指数逼近:按秒收敛,与刷新率无关。 */
+function approach(current: number, target: number, dt: number, speed: number): number {
+  const k = 1 - Math.exp(-speed * dt);
+  const next = current + (target - current) * k;
+  return Math.abs(next - target) < 0.004 ? target : next;
+}
+
+export function stepAnim(
+  anim: AnimState,
+  scene: Scene,
+  dt: number,
+  selectedId: string | null,
+): void {
+  for (const n of scene.nodes) {
+    const target = n.dimmed && !n.hovered && !n.selected ? 0.16 : 1;
+    anim.nodeAlpha.set(n.id, approach(anim.nodeAlpha.get(n.id) ?? 1, target, dt, 7));
+  }
+  for (const e of scene.edges) {
+    const target = e.faded ? 0.1 : 1;
+    anim.edgeAlpha.set(e.id, approach(anim.edgeAlpha.get(e.id) ?? 1, target, dt, 7));
+  }
+
+  // 换了选中项就重放入场:这是"点了一颗星"的反馈,必须每次都给
+  if (selectedId !== anim.focusId) {
+    anim.focusId = selectedId;
+    if (selectedId) anim.focus = 0;
+  }
+  anim.focus = approach(anim.focus, selectedId ? 1 : 0, dt, 6);
+}
+
 export interface RenderInput {
   scene: Scene;
   camera: Camera;
@@ -29,6 +82,8 @@ export interface RenderInput {
   time: number;
   /** 归一化指针位置(-0.5~0.5),用于视差。让"近"的星跟着手移动,画面才有纵深。 */
   pointer?: { x: number; y: number };
+  /** 逐帧动画状态;不传则一切都按终态绘制(截图、测试用) */
+  anim?: AnimState;
 }
 
 /**
@@ -57,6 +112,7 @@ const PARALLAX = 12;
 export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): void {
   const { scene, camera, width, height, theme, level, time } = input;
   const pointer = input.pointer ?? { x: 0, y: 0 };
+  const anim = input.anim ?? createAnimState();
   const p = PALETTES[theme];
   const a = levelAlpha(level);
 
@@ -94,13 +150,18 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 3. 边 ----------
-  if (a.edge > 0.01) drawEdges(ctx, scene, width, height, p, a.edge, level, fx, fy, time * 14);
+  if (a.edge > 0.01) drawEdges(ctx, scene, width, height, p, a.edge, level, fx, fy, time * 14, anim);
 
   // ---------- 4. 星体 ----------
-  if (a.node > 0.01) drawNodes(ctx, scene, width, height, p, a.node, time, fx, fy, camera.scale);
+  if (a.node > 0.01) {
+    drawNodes(ctx, scene, width, height, p, a.node, time, fx, fy, camera.scale, anim);
+  }
+
+  // ---------- 5. 边上的关系类型 ----------
+  if (a.edge > 0.01) drawEdgeLabels(ctx, scene, width, height, p, fx, fy, anim, level);
 
   // ---------- 5. 标签 ----------
-  drawLabels(ctx, scene, camera, width, height, p, a, level, fx, fy);
+  drawLabels(ctx, scene, camera, width, height, p, a, level, fx, fy, anim);
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +268,7 @@ function drawEdges(
   fx: Float64Array,
   fy: Float64Array,
   flow: number,
+  anim: AnimState,
 ): void {
   ctx.save();
   ctx.lineCap = "round";
@@ -220,6 +282,7 @@ function drawEdges(
       faded: boolean;
       dash: number[] | null;
       segs: number[];
+      minAlpha: number;
     }
   >();
 
@@ -262,10 +325,20 @@ function drawEdges(
     const key = `${e.tone}|${e.active ? 1 : 0}|${layer}|${e.faded ? 1 : 0}|${e.dash ? e.dash.join(",") : "solid"}`;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { tone: e.tone, active: e.active, layer, faded: e.faded, dash: e.dash, segs: [] };
+      bucket = {
+        tone: e.tone,
+        active: e.active,
+        layer,
+        faded: e.faded,
+        dash: e.dash,
+        segs: [],
+        minAlpha: 1,
+      };
       buckets.set(key, bucket);
     }
     bucket.segs.push(ax, ay, cx, cy, bx, by);
+    // 同桶取最暗的一条:整桶一起淡,不会有一帧内的亮度不一致
+    bucket.minAlpha = Math.min(bucket.minAlpha, anim.edgeAlpha.get(e.id) ?? 1);
   }
 
   for (const bucket of buckets.values()) {
@@ -293,8 +366,12 @@ function drawEdges(
           ? 0.14
           : 0.18;
 
-    // 被关掉的关系淡到几乎只剩痕迹:要能看出"这里原来有线",但不该再抢注意力
-    ctx.globalAlpha = base * alpha * (bucket.faded ? 0.12 : 1);
+    /*
+      边不按条动画(那要几千个浮点数),而是同桶共用一个当前透明度:
+      淡入淡出时整桶一起变化,足够顺滑。
+      被关掉的关系淡到几乎只剩痕迹 —— 要能看出"这里原来有线",但不该再抢注意力。
+    */
+    ctx.globalAlpha = base * alpha * (bucket.faded ? 0.12 : 1) * bucket.minAlpha;
     ctx.lineWidth = bucket.active ? 1.2 : semantic ? 1 : 0.6;
 
     // 语义边让虚线缓缓流动:线是"活的",静态的虚线看起来只是样式
@@ -334,118 +411,193 @@ function drawNodes(
   fx: Float64Array,
   fy: Float64Array,
   scale: number,
+  anim: AnimState,
 ): void {
   ctx.save();
   ctx.globalCompositeOperation = p.blend;
 
-  const themeNow: Theme = p === PALETTES.light ? "light" : "dark";
   const maxLog = Math.log10(Math.max(10, ...scene.nodes.map((n) => n.citations)) + 1);
+  const themeNow: Theme = p === PALETTES.light ? "light" : "dark";
 
   /**
-   * 星体分两遍画:先铺光晕,再落星核。
+   * 一颗一颗画,而不是按亮度分桶批量画。
    *
-   * **光晕是这套视觉的灵魂**。没有它,星图就是一堆白点加线;
-   * 有了它,每颗星才像"在发光",而光的颜色又编码了它所属的前沿 ——
-   * 于是"哪些星是一伙的"不用看标签也能读出来。
-   * 分两遍是因为加色混合下,先画的星核会被后画的邻星光晕提亮,
-   * 顺序不定,亮度也就不稳定。
+   * 分桶是为了省绘制次数,但它要求"同一桶里的星透明度一致" ——
+   * 而淡入淡出恰恰让每颗星的透明度都不同。既然动画的优先级更高,
+   * 就放弃这点批量化:几十到几百个圆弧,对一帧来说微不足道。
    */
-  for (const n of scene.nodes) {
-    if (n.dimmed && !n.hovered && !n.selected) continue;
-    const i = scene.nodes.indexOf(n);
+  for (let i = 0; i < scene.nodes.length; i++) {
+    const n = scene.nodes[i];
     const x = fx[i];
     const y = fy[i];
-    if (x === undefined || y === undefined) continue;
-    if (x < -30 || x > width + 30 || y < -30 || y > height + 30) continue;
+    if (!n || x === undefined || y === undefined) continue;
+
+    const focus = n.selected ? anim.focus : 0;
+    const nodeAlpha = anim.nodeAlpha.get(n.id) ?? 1;
+    const a = alpha * nodeAlpha;
+    if (a < 0.01) continue;
+
+    if (x < -40 || x > width + 40 || y < -40 || y > height + 40) continue;
 
     const twinkle = 0.86 + 0.14 * Math.sin(time * 1.25 * n.motion.tws + n.motion.tw);
-    const r = Math.max(0.7, Math.min(9, n.r * scale)) * (n.hovered ? 1.5 : 1);
+    const brightness = Math.max(0, Math.min(1, Math.log10(n.citations + 1) / Math.max(1, maxLog)));
+    const base = Math.max(2.2, Math.min(9, n.r * scale)) * (0.86 + brightness * 0.4);
+    // 选中:星核放大、光晕张开 —— 用一个进度值驱动,所以是"涨开"而不是"跳大"
+    const r = base * (1 + focus * 0.55) * (n.hovered ? 1.35 : 1) * (0.96 + 0.08 * twinkle);
 
-    const haloR = r * (n.hovered || n.selected ? 9 : 5.5);
-    // 光晕用所属前沿的色调:于是"哪些星是一伙的"不用看标签也能读出来
-    const glow = (a: number) => hexA(domainToneBase(n.tone, themeNow), a);
+    // 光晕:颜色来自所属前沿,选中时更亮更大
+    const glow = (ga: number) => hexA(domainToneBase(n.tone, themeNow), ga);
+    const haloR = r * (n.hovered || n.selected ? 9 : 5.5) * (1 + focus * 0.35);
     const g = ctx.createRadialGradient(x, y, 0, x, y, haloR);
-    g.addColorStop(0, glow((n.hovered ? 0.36 : 0.22) * twinkle));
-    g.addColorStop(0.45, glow(0.07 * twinkle));
+    g.addColorStop(0, glow((n.hovered || n.selected ? 0.34 : 0.2) * twinkle * (1 + focus * 0.5)));
+    g.addColorStop(0.45, glow(0.06 * twinkle));
     g.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.globalAlpha = alpha;
+    ctx.globalAlpha = a;
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(x, y, haloR, 0, Math.PI * 2);
     ctx.fill();
-  }
 
-  ctx.globalCompositeOperation = p.blend;
-  const buckets: Array<{ idx: number[]; a: number; rr: number }> = [];
-  const BUCKETS = 5;
-  for (let b = 0; b < BUCKETS; b++) {
-    buckets.push({ idx: [], a: 0.2 + (b / (BUCKETS - 1)) * 0.68, rr: 0.85 + (b / (BUCKETS - 1)) * 0.7 });
-  }
-  scene.nodes.forEach((n, i) => {
-    const t = Math.max(0, Math.min(1, Math.log10(n.citations + 1) / Math.max(1, maxLog)));
-    buckets[Math.min(BUCKETS - 1, Math.floor(t * BUCKETS))]?.idx.push(i);
-  });
-
-  for (const bucket of buckets) {
-    if (!bucket.idx.length) continue;
-
-    /**
-     * 分两遍画:亮的正常 alpha,被淡出的统一压到 0.18。
-     *
-     * 淡出而不是隐藏,是为了保住用户的空间记忆 —— 关掉一类关系之后,
-     * 那些星还在原来的位置上,只是不再被点亮。
-     */
+    // 星核
+    ctx.globalAlpha = a * (0.42 + brightness * 0.58) * (0.94 + 0.06 * twinkle);
     ctx.fillStyle = p.ink;
-    for (const pass of [0, 1] as const) {
-      ctx.globalAlpha = alpha * bucket.a * (pass === 0 ? 1 : 0.18);
-      ctx.beginPath();
-      for (const i of bucket.idx) {
-        const n = scene.nodes[i];
-        if (!n) continue;
-        if ((pass === 0) !== !n.dimmed) continue;
-        const x = fx[i];
-        const y = fy[i];
-        if (x === undefined || y === undefined) continue;
-        const r = Math.max(0.7, Math.min(9, n.r * scale * bucket.rr)) * (n.dimmed ? 0.72 : 1);
-        ctx.moveTo(x + r, y);
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-      }
-      ctx.fill();
-    }
-  }
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
 
-  ctx.restore();
-  ctx.save();
-
-  // ---------- 种子、选中与悬浮:唯一的强调 ----------
-  scene.nodes.forEach((n, i) => {
-    if (!n.seed && !n.selected && !n.hovered) return;
-    const x = fx[i];
-    const y = fy[i];
-    if (x === undefined || y === undefined) return;
-    const r = Math.max(2.5, Math.min(9, n.r * scale));
-
+    // 环:三种身份各一层,互相叠加而不是互相覆盖
     if (n.seed) {
       const pulse = 1 + Math.sin(time * 1.1) * 0.06;
-      ctx.globalAlpha = 0.5 * alpha;
+      ctx.globalAlpha = 0.5 * a;
       ctx.strokeStyle = p.accent;
       ctx.lineWidth = 1;
       ctx.beginPath();
       ctx.arc(x, y, (r + 7) * pulse, 0, Math.PI * 2);
       ctx.stroke();
     }
-
-    if (n.hovered || n.selected) {
-      ctx.globalAlpha = (n.selected ? 0.95 : 0.6) * alpha;
-      ctx.strokeStyle = n.selected ? p.accent : p.ink2;
-      ctx.lineWidth = n.selected ? 1.4 : 1;
+    if (n.hovered && !n.selected) {
+      ctx.globalAlpha = 0.55 * a;
+      ctx.strokeStyle = p.ink2;
+      ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.arc(x, y, r + 4.5, 0, Math.PI * 2);
+      ctx.arc(x, y, r + 5, 0, Math.PI * 2);
       ctx.stroke();
     }
-  });
+    if (focus > 0.01) {
+      // 环从星体向外张开:半径随进度增长,透明度在末端收回
+      const ease = 1 - (1 - focus) * (1 - focus);
+      ctx.globalAlpha = a * focus * (1 - focus * 0.25) * 0.9;
+      ctx.strokeStyle = p.accent;
+      ctx.lineWidth = 1.3;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 6 + ease * 14, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+  }
 
   ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// 边上的关系类型
+// ---------------------------------------------------------------------------
+
+/** 同时最多标几条边。多了会糊成一片注释,反而没人读。 */
+const EDGE_LABEL_LIMIT = 10;
+
+/**
+ * 把关系类型写在边旁边。
+ *
+ * 有了它,"这条线是什么意思"就不需要去对照右下角的图例 ——
+ * 读图的地方和图例离得越远,读图的成本越高。
+ *
+ * 只标**与当前选中项相连**的语义边:全局标注等于给整张图加了一层噪声;
+ * 用户点了一颗星之后,他关心的恰好就是这一些。
+ */
+function drawEdgeLabels(
+  ctx: CanvasRenderingContext2D,
+  scene: Scene,
+  width: number,
+  height: number,
+  p: CanvasPalette,
+  fx: Float64Array,
+  fy: Float64Array,
+  anim: AnimState,
+  level: ViewLevel,
+): void {
+  if (!anim.focusId) return;
+  if (anim.focus < 0.3) return;
+
+  /**
+   * 直接从"当前选中了谁"出发找边,而不是依赖场景里预先算好的 active 标志。
+   *
+   * 前者只有一个真相源(focusId),后者要在场景重建、边合并、筛选淡出
+   * 三条路径上都保持正确 —— 实测其中一条没跟上,标签就整批不出现,
+   * 而且画面上完全看不出是哪一步断了。
+   */
+  const focusIndex = scene.nodes.findIndex((n) => n.id === anim.focusId);
+  if (focusIndex < 0) return;
+
+  const shown = scene.edges
+    .filter((e) => e.layer === "semantic" && !e.faded && (e.a === focusIndex || e.b === focusIndex))
+    .sort((x, y) => y.confidence - x.confidence)
+    .slice(0, EDGE_LABEL_LIMIT);
+
+  if (!shown.length) return;
+
+  const appear = Math.min(1, Math.max(0, (anim.focus - 0.3) / 0.7));
+
+  ctx.save();
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.font = `10.5px ${SANS}`;
+
+  for (const e of shown) {
+    const ax = fx[e.a];
+    const ay = fy[e.a];
+    const bx = fx[e.b];
+    const by = fy[e.b];
+    if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
+
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    if (mx < 40 || mx > width - 40 || my < 30 || my > height - 30) continue;
+
+    const text = e.label;
+    const w = ctx.measureText(text).width;
+    const padX = 5;
+    const h = 16;
+
+    ctx.globalAlpha = appear * (level === "paper" ? 0.92 : 0.55);
+
+    // 底衬:星图线条密,没有底衬的文字读不出来。用极淡的圆角底而不是描边,
+    // 描边会让字看起来像贴纸
+    ctx.fillStyle = hexA(p.bg, 0.82);
+    roundRect(ctx, mx - w / 2 - padX, my - h / 2, w + padX * 2, h, 8);
+    ctx.fill();
+
+    ctx.fillStyle = toneOf(e.tone, p);
+    ctx.fillText(text, mx, my + 0.5);
+  }
+
+  ctx.restore();
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +617,7 @@ function drawLabels(
   level: ViewLevel,
   fx: Float64Array,
   fy: Float64Array,
+  anim: AnimState,
 ): void {
   ctx.save();
   ctx.textAlign = "center";
@@ -490,15 +643,19 @@ function drawLabels(
       if (c.x < 60 || c.x > width - 60 || c.y < 40 || c.y > height - 40) continue;
 
       const isKey = n.seed || n.selected || n.hovered;
-      const text = truncate(n.label, isKey ? 46 : 30);
+      const text = truncate(n.label, isKey ? 52 : 30);
       const r = Math.max(2.5, n.r * camera.scale);
+      const focus = n.selected ? anim.focus : 0;
 
-      ctx.font = `${isKey ? 12 : 10.5}px ${SANS}`;
-      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel;
-      ctx.fillStyle = p.ink2;
+      // 选中项标题:从 12px 涨到 15.5px,透明度同步拉满 —— 用一个进度值驱动,
+      // 所以它是"涨开"而不是"跳大"
+      const size = 12 + focus * 3.5;
+      ctx.font = `${isKey ? size : 10.5}px ${SANS}`;
+      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel * (n.selected ? Math.min(1, anim.focus * 3) : 1);
+      ctx.fillStyle = n.selected ? p.ink : p.ink2;
 
       // 标签压在星体上会互相干扰,统一挪到星体下方
-      ctx.fillText(text, c.x, c.y + r + 13);
+      ctx.fillText(text, c.x, c.y + r + 13 + focus * 3);
     }
   }
 

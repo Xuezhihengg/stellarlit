@@ -17,7 +17,7 @@ import type { StarfieldPayload } from "@/types/api";
 import type { ViewLevel } from "@/types/starfield";
 import { viewLevelOf } from "@/types/starfield";
 
-import { drawScene } from "./render";
+import { createAnimState, drawScene, stepAnim } from "./render";
 
 /**
  * 初始视角的最低缩放。
@@ -89,11 +89,16 @@ export function StarMap({
   });
   /** 归一化指针位置(-0.5~0.5):视差用,每帧变化,只走 ref */
   const pointerRef = useRef({ x: 0, y: 0, tx: 0, ty: 0 });
+  /** 逐帧动画状态:淡入淡出、选中入场都靠它,每帧变化,只走 ref */
+  const animRef = useRef(createAnimState());
 
   /** 渲染循环读的是这一份;React 重渲染时替换内容,引用不变。 */
   const liveRef = useRef<{ scene: Scene | null; payload: StarfieldPayload | null; theme: "dark" | "light" }>(
     { scene: null, payload: null, theme },
   );
+  /** 渲染循环要读选中项,但它的依赖数组里不能有 selectedId(否则每次点星都重建循环) */
+  const selectedIdRef = useRef<string | null>(selectedId);
+  selectedIdRef.current = selectedId;
 
   const scene = useMemo<Scene | null>(() => {
     if (!payload) return null;
@@ -394,6 +399,18 @@ export function StarMap({
         if (sceneNow) {
           const dpr = sizeRef.current.dpr;
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          // 先把动画推进一帧,再绘制 —— 顺序反了会慢一帧,快速操作时看得出来
+          const anim = animRef.current;
+          if (reduceMotion) {
+            // 尊重系统设置:直接落到终态,不做过渡
+            for (const n of sceneNow.nodes) anim.nodeAlpha.set(n.id, n.dimmed ? 0.16 : 1);
+            for (const e of sceneNow.edges) anim.edgeAlpha.set(e.id, e.faded ? 0.1 : 1);
+            anim.focusId = selectedIdRef.current;
+            anim.focus = selectedIdRef.current ? 1 : 0;
+          } else {
+            stepAnim(anim, sceneNow, dt, selectedIdRef.current);
+          }
+
           drawScene(ctx, {
             scene: sceneNow,
             camera: cameraRef.current,
@@ -403,6 +420,7 @@ export function StarMap({
             level,
             time: reduceMotion ? 0 : elapsed,
             pointer: reduceMotion ? { x: 0, y: 0 } : pointerRef.current,
+            anim,
           });
         }
 

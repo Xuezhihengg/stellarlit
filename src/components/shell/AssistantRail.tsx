@@ -54,10 +54,17 @@ export function AssistantRail({
 
   return (
     <aside
-      className="pointer-events-auto fixed top-0 right-0 z-30 flex h-dvh flex-col border-l border-hair bg-bg/80 backdrop-blur-[2px] transition-transform duration-[--dur-base]"
+      /**
+       * 浮窗而不是吸附面板。
+       *
+       * 吸附面板会把画布切掉一条,整片星空从此"少了一块";
+       * 浮窗让星图完整地铺满整屏,面板像一张浮在星空上的纸 ——
+       * 这更贴合"星图是主角、助手是旁白"的关系。
+       */
+      className="pointer-events-auto fixed top-4 right-4 bottom-4 z-30 flex flex-col overflow-hidden rounded-2xl border border-hair-2 bg-bg/78 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.85)] backdrop-blur-xl transition-transform duration-[--dur-base]"
       style={{
         width: 372,
-        transform: collapsed ? "translateX(100%)" : "translateX(0)",
+        transform: collapsed ? "translateX(calc(100% + 16px))" : "translateX(0)",
       }}
       aria-label="研究助手"
     >

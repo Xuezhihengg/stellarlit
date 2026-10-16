@@ -39,7 +39,7 @@ export function BottomBar({
     >
       <div className="flex items-end justify-between gap-8">
         {/* ---------- 时间轴 ---------- */}
-        <div className="pointer-events-auto flex items-center gap-4">
+        <div className="pointer-events-auto flex items-center gap-3 rounded-2xl border border-hair-2 bg-bg/65 px-3 py-2 backdrop-blur-md">
           {ticks.length ? (
             <>
               <button
@@ -47,10 +47,10 @@ export function BottomBar({
                 onClick={() => onMinYearChange(null)}
                 title="显示全部年份"
                 aria-pressed={minYear === null}
-                className={`grid h-7 w-7 shrink-0 place-items-center rounded-full border transition-colors duration-[--dur-fast] ${
+                className={`grid h-6 w-6 shrink-0 place-items-center rounded-full transition-colors duration-[--dur-fast] ${
                   minYear === null
-                    ? "border-hair-2 text-ink-4 hover:border-ink-4 hover:text-ink-3"
-                    : "border-accent/45 bg-accent/8 text-accent"
+                    ? "text-ink-4 hover:bg-hair hover:text-ink-3"
+                    : "bg-accent/12 text-accent"
                 }`}
               >
                 <svg width="9" height="9" viewBox="0 0 9 9" aria-hidden="true">
@@ -60,12 +60,23 @@ export function BottomBar({
               </button>
 
               {/*
-                年份刻度做成"一条轴线 + 刻度点 + 标签",而不是一排等宽的按钮。
-                等宽按钮看起来像筛选器,轴线看起来像时间 —— 而这条轴回答的正是
-                「这个领域这些年怎么变的」。
+                时间轴画成"一条带刻度的轨道",而不是一排等宽按钮。
+                轨道有起点和终点,按钮没有 —— 而这条轨道回答的正是
+                「这个领域这些年是怎么变的」。
+                选中的那一段轨道会亮起来,让"正在看哪一段"是位置信息而不是文字信息。
               */}
-              <div className="relative flex items-center gap-0">
-                <span className="pointer-events-none absolute inset-x-1 top-1/2 h-px bg-hair" />
+              <div className="relative flex items-center">
+                <span className="pointer-events-none absolute inset-x-[7px] top-[11px] h-px bg-hair-2" />
+                {minYear !== null ? (
+                  <span
+                    className="pointer-events-none absolute top-[11px] h-px bg-accent/70"
+                    style={{
+                      left: 7 + (ticks.findIndex((y) => y >= minYear) / Math.max(1, ticks.length)) * 100 + "%",
+                      right: 7,
+                    }}
+                  />
+                ) : null}
+
                 {ticks.map((y) => {
                   const active = minYear !== null && y >= minYear;
                   return (
@@ -74,15 +85,17 @@ export function BottomBar({
                       type="button"
                       onClick={() => onMinYearChange(minYear === y ? null : y)}
                       aria-pressed={minYear === y}
-                      className="group relative flex flex-col items-center px-2 pt-2.5 pb-1"
+                      className="group relative flex w-[46px] flex-col items-center pt-[6px] pb-0.5"
                     >
                       <span
-                        className={`absolute top-[7px] h-1 w-1 rounded-full transition-colors duration-[--dur-fast] ${
-                          active ? "bg-accent" : "bg-ink-4 group-hover:bg-ink-3"
+                        className={`h-[7px] w-[7px] rounded-full border transition-all duration-[--dur-fast] ${
+                          active
+                            ? "border-accent bg-accent"
+                            : "border-ink-4 bg-bg group-hover:border-ink-3 group-hover:bg-ink-4"
                         }`}
                       />
                       <span
-                        className={`font-mono text-[10px] transition-colors duration-[--dur-fast] ${
+                        className={`mt-1.5 font-mono text-[10px] transition-colors duration-[--dur-fast] ${
                           active ? "text-accent" : "text-ink-4 group-hover:text-ink-3"
                         }`}
                       >
@@ -94,8 +107,8 @@ export function BottomBar({
               </div>
             </>
           ) : (
-            <p className="text-[10.5px] tracking-[0.1em] text-ink-4">
-              输入一篇种子论文 · 星空会沿着它的研究脉络长出来
+            <p className="px-2 text-[10.5px] tracking-[0.08em] text-ink-4">
+              输入一篇种子论文,星空会沿着它的研究脉络长出来
             </p>
           )}
         </div>

@@ -22,7 +22,7 @@ interface TopBarProps {
 export function TopBar({ brand, title, meta, right, rightInset = 0 }: TopBarProps) {
   return (
     <header
-      className="pointer-events-none fixed top-0 left-0 z-30 flex items-start justify-between gap-6 py-7 pl-9"
+      className="pointer-events-none fixed top-0 left-0 z-30 flex items-start justify-between gap-6 py-7 pr-9 pl-9"
       style={{ right: rightInset, transition: "right var(--dur-base) var(--ease-out)" }}
     >
       <div className="pointer-events-auto min-w-[180px]">{brand}</div>

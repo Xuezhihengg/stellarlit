@@ -31,8 +31,8 @@ interface StarfieldState {
   candidates: SeedCandidate[];
   query: string;
   selectedId: string | null;
-  /** 用户关闭了哪些关系类型 */
-  hiddenKinds: Set<string>;
+  /** 用户关掉了哪些关系类型(淡出对应星星与边,不是隐藏) */
+  dimmedKinds: Set<string>;
   minYear: number | null;
   /** 流式构建的实时进度;null 表示当前没有在构建 */
   streamProgress: {
@@ -69,7 +69,7 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
   candidates: [],
   query: "",
   selectedId: null,
-  hiddenKinds: new Set<string>(),
+  dimmedKinds: new Set<string>(),
   minYear: null,
   streamProgress: null,
 
@@ -78,10 +78,10 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
 
   toggleKind: (kind) =>
     set((s) => {
-      const next = new Set(s.hiddenKinds);
+      const next = new Set(s.dimmedKinds);
       if (next.has(kind)) next.delete(kind);
       else next.add(kind);
-      return { hiddenKinds: next };
+      return { dimmedKinds: next };
     }),
 
   setMinYear: (year) => set({ minYear: year }),

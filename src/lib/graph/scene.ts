@@ -24,7 +24,7 @@ export interface SceneNode {
   seed: boolean;
   selected: boolean;
   hovered: boolean;
-  /** 被时间轴筛掉:画成暗星 */
+  /** 被时间轴或关系筛选淡出的星:画成暗星而不是消失 */
   dimmed: boolean;
   /** 该节点相关的关系类型集合,决定高光色 */
   relationKinds: string[];
@@ -70,8 +70,10 @@ function motionOf(id: string): StarMotion {
   const base = (h >>> 0) / 4294967296;
   const k = (i: number) => hash01(base * 1000 + i * 7.13);
   return {
-    amp: 1 + k(0) * 2.8,
-    spd: 0.1 + k(1) * 0.19,
+    // 振幅与速度都比"刚好看得出来"再大一点:星图是给人看的,
+    // 动得太含蓄等于没有动 —— 但也不能大到让人读不出坐标
+    amp: 2.6 + k(0) * 5.2,
+    spd: 0.16 + k(1) * 0.3,
     phx: k(2) * Math.PI * 2,
     phy: k(3) * Math.PI * 2,
     dp: 0.35 + k(4) * 0.65,
@@ -94,6 +96,8 @@ export interface SceneEdge {
   dash: number[] | null;
   /** 两端至少有一端是高亮节点 */
   active: boolean;
+  /** 所属关系类型被关掉:淡出,但保留在画面上 */
+  faded: boolean;
 }
 
 export interface SceneBlob {
@@ -129,8 +133,14 @@ export interface Scene {
 export interface SceneOptions {
   selectedId?: NodeId | null;
   hoveredId?: NodeId | null;
-  /** 用户关闭了哪些关系类型 */
-  hiddenKinds?: ReadonlySet<string>;
+  /**
+   * 用户**关掉**了哪些关系类型。
+   *
+   * 语义是"淡出"而不是"隐藏":直接抽掉会让图的形状整个变一次,
+   * 用户失去空间记忆 —— 关掉一类关系后,剩下的星体应该还在原位,
+   * 只是不再被那种关系点亮。所以星星与对应的边一起变暗。
+   */
+  dimmedKinds?: ReadonlySet<string>;
   /** 只保留这个年份之后的工作;null 表示不限 */
   minYear?: number | null;
 }
@@ -186,7 +196,7 @@ export function buildScene(
   seedIds: ReadonlySet<NodeId>,
   opts: SceneOptions = {},
 ): Scene {
-  const { selectedId = null, hoveredId = null, hiddenKinds, minYear = null } = opts;
+  const { selectedId = null, hoveredId = null, dimmedKinds, minYear = null } = opts;
 
   const paperNodes = graph.nodes.filter((n) => n.kind === "paper");
   const years = paperNodes.map((p) => p.year).filter((y) => y > 0);
@@ -224,7 +234,11 @@ export function buildScene(
       seed: seedIds.has(node.id),
       selected: node.id === selectedId,
       hovered: node.id === hoveredId,
-      dimmed: minYear !== null && node.year > 0 && node.year < minYear,
+      dimmed:
+        (minYear !== null && node.year > 0 && node.year < minYear) ||
+        (dimmedKinds?.size
+          ? [...(relationKinds.get(node.id) ?? [])].every((k) => dimmedKinds.has(k))
+          : false),
       relationKinds: [...(relationKinds.get(node.id) ?? [])],
       motion: motionOf(node.id),
     });
@@ -349,7 +363,7 @@ export function buildScene(
 
   for (const e of graph.edges) {
     if (e.kind === "BELONGS_TO" || e.kind === "PART_OF" || e.kind === "HAS_CHUNK") continue;
-    if (hiddenKinds?.has(e.kind)) continue;
+    const faded = Boolean(dimmedKinds?.has(e.kind));
 
     const a = index.get(e.source);
     const b = index.get(e.target);
@@ -372,6 +386,7 @@ export function buildScene(
       tone: EDGE_TONE[e.kind] ?? "ink4",
       dash: EDGE_DASH[e.kind] ?? null,
       active: activeIds.size > 0 && (activeIds.has(e.source) || activeIds.has(e.target)),
+      faded,
     });
   }
 

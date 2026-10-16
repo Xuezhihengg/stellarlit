@@ -16,7 +16,8 @@ import { useTheme } from "@/hooks/use-theme";
 import { useStarfieldStore } from "@/stores/starfield-store";
 import type { ViewLevel } from "@/types/starfield";
 
-const RAIL_WIDTH = 372;
+/** 浮窗宽 372 + 右侧留白 16:星图自适应视角时要让出的宽度 */
+const RAIL_WIDTH = 388;
 
 /**
  * 主界面。
@@ -30,7 +31,7 @@ export default function StarfieldPage() {
 
   const payload = useStarfieldStore((s) => s.payload);
   const selectedId = useStarfieldStore((s) => s.selectedId);
-  const hiddenKinds = useStarfieldStore((s) => s.hiddenKinds);
+  const dimmedKinds = useStarfieldStore((s) => s.dimmedKinds);
   const minYear = useStarfieldStore((s) => s.minYear);
   const phase = useStarfieldStore((s) => s.phase);
   const query = useStarfieldStore((s) => s.query);
@@ -86,7 +87,7 @@ export default function StarfieldPage() {
       <StarMap
         payload={payload}
         selectedId={selectedId}
-        hiddenKinds={hiddenKinds}
+        dimmedKinds={dimmedKinds}
         minYear={minYear}
         theme={theme}
         rightInset={collapsed ? 0 : RAIL_WIDTH}
@@ -153,7 +154,7 @@ export default function StarfieldPage() {
           payload ? (
             <RelationLegend
               payload={payload}
-              hiddenKinds={hiddenKinds}
+              dimmedKinds={dimmedKinds}
               onToggle={toggleKind}
             />
           ) : null

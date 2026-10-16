@@ -4,7 +4,7 @@ import type { StarfieldPayload } from "@/types/api";
 
 interface RelationLegendProps {
   payload: StarfieldPayload;
-  hiddenKinds: Set<string>;
+  dimmedKinds: Set<string>;
   onToggle: (kind: string) => void;
 }
 
@@ -24,7 +24,7 @@ const KIND_TO_PRESET: Record<string, string> = {
  * 图例与筛选合并成同一个控件,是因为它们回答的是同一个问题:
  * 「这条线是什么意思」。点一下就能把它关掉,比先看说明再去找筛选菜单快得多。
  */
-export function RelationLegend({ payload, hiddenKinds, onToggle }: RelationLegendProps) {
+export function RelationLegend({ payload, dimmedKinds, onToggle }: RelationLegendProps) {
   const counts = new Map<string, number>();
   for (const e of payload.graph.edges) {
     if (e.layer !== "semantic") continue;
@@ -39,7 +39,7 @@ export function RelationLegend({ payload, hiddenKinds, onToggle }: RelationLegen
       {presets.map((p) => {
         const kind = Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "";
         const n = counts.get(kind) ?? 0;
-        const off = hiddenKinds.has(kind);
+        const off = dimmedKinds.has(kind);
 
         return (
           <button

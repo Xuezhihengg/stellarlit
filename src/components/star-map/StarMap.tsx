@@ -32,7 +32,7 @@ const MIN_INITIAL_SCALE = 0.5;
 interface StarMapProps {
   payload: StarfieldPayload | null;
   selectedId: string | null;
-  hiddenKinds: Set<string>;
+  dimmedKinds: Set<string>;
   minYear: number | null;
   theme: "dark" | "light";
   /** 右侧被侧栏遮住的像素宽度:自适应视角时要把它让出来 */
@@ -63,7 +63,7 @@ interface HoverState {
 export function StarMap({
   payload,
   selectedId,
-  hiddenKinds,
+  dimmedKinds,
   minYear,
   theme,
   rightInset = 0,
@@ -100,10 +100,10 @@ export function StarMap({
     const seedIds = new Set(payload.starfield.seeds.map((s) => s.paperId));
     return buildScene(payload.graph, payload.layout, seedIds, {
       selectedId,
-      hiddenKinds,
+      dimmedKinds,
       minYear,
     });
-  }, [payload, selectedId, hiddenKinds, minYear]);
+  }, [payload, selectedId, dimmedKinds, minYear]);
 
   liveRef.current.scene = scene;
   liveRef.current.payload = payload;
@@ -257,10 +257,31 @@ export function StarMap({
         const tip = tipRef.current;
         if (tip) {
           if (hit) {
+            /**
+             * 换一颗星时才重放动画。
+             *
+             * 直接在同一个元素上改文字,视觉上是"啪"地一下换掉 ——
+             * 用户会觉得标签是突然冒出来的。这里改成:先把标签压暗下沉,
+             * 下一帧再淡入浮起,于是"浮现"这两个字才有对应的动效。
+             * 同一颗星之间移动指针不重放,否则标签会一直闪。
+             */
+            const changed = tip.dataset.nodeId !== hit.id;
+            tip.dataset.nodeId = hit.id;
             tip.textContent = hit.label;
-            tip.style.transform = `translate3d(${pt.x}px, ${pt.y}px, 0)`;
+
+            if (changed) {
+              tip.style.transition = "none";
+              tip.style.opacity = "0";
+              tip.style.transform = `translate3d(${pt.x}px, ${pt.y}px, 0) translateY(6px) scale(0.96)`;
+              // 强制一次样式计算,让上面的初始态被浏览器"看见"
+              void tip.offsetHeight;
+              tip.style.transition = "opacity 200ms var(--ease-out), transform 200ms var(--ease-out)";
+            }
             tip.style.opacity = "1";
+            tip.style.transform = `translate3d(${pt.x}px, ${pt.y}px, 0) translateY(0) scale(1)`;
           } else {
+            tip.dataset.nodeId = "";
+            tip.style.transition = "opacity 140ms var(--ease-out)";
             tip.style.opacity = "0";
           }
         }
@@ -268,7 +289,7 @@ export function StarMap({
         hoverRef.current.screenX = pt.x;
         hoverRef.current.screenY = pt.y;
         const tip = tipRef.current;
-        if (tip) tip.style.transform = `translate3d(${pt.x}px, ${pt.y}px, 0)`;
+        if (tip) tip.style.transform = `translate3d(${pt.x}px, ${pt.y}px, 0) translateY(0) scale(1)`;
       }
     };
 
@@ -414,8 +435,12 @@ export function StarMap({
       <div
         ref={tipRef}
         aria-hidden="true"
-        className="pointer-events-none fixed top-0 left-0 z-40 max-w-[320px] truncate rounded-md border border-hair-2 bg-surface/90 px-2.5 py-1.5 text-[11px] text-ink-2 opacity-0 backdrop-blur-sm"
-        style={{ transform: "translate3d(-9999px,-9999px,0)", transition: "opacity 140ms ease-out" }}
+        className="pointer-events-none fixed top-0 left-0 z-40 max-w-[340px] truncate rounded-lg border border-hair-2 bg-surface/92 px-3 py-2 text-[11.5px] text-ink-2 opacity-0 shadow-[0_10px_30px_-14px_rgba(0,0,0,0.8)] backdrop-blur-md"
+        style={{
+          transform: "translate3d(-9999px,-9999px,0)",
+          transformOrigin: "top left",
+          transition: "opacity 200ms var(--ease-out), transform 200ms var(--ease-out)",
+        }}
       />
     </>
   );

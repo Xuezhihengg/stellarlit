@@ -94,7 +94,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 3. 边 ----------
-  if (a.edge > 0.01) drawEdges(ctx, scene, width, height, p, a.edge, level, fx, fy);
+  if (a.edge > 0.01) drawEdges(ctx, scene, width, height, p, a.edge, level, fx, fy, time * 14);
 
   // ---------- 4. 星体 ----------
   if (a.node > 0.01) drawNodes(ctx, scene, width, height, p, a.node, time, fx, fy, camera.scale);
@@ -186,6 +186,16 @@ function drawBlobs(
 // 边
 // ---------------------------------------------------------------------------
 
+/** 由边 id 派生一个稳定的 0-1 数:同一条边每帧形状一致。 */
+function hashEdge(id: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0) / 4294967296;
+}
+
 function drawEdges(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
@@ -196,6 +206,7 @@ function drawEdges(
   level: ViewLevel,
   fx: Float64Array,
   fy: Float64Array,
+  flow: number,
 ): void {
   ctx.save();
   ctx.lineCap = "round";
@@ -206,6 +217,7 @@ function drawEdges(
       tone: string;
       active: boolean;
       layer: "structural" | "semantic";
+      faded: boolean;
       dash: number[] | null;
       segs: number[];
     }
@@ -229,14 +241,31 @@ function drawEdges(
       continue;
     }
 
+    /**
+     * 边画成**弧线**而不是直线。
+     *
+     * 直线在密集处会让整张图变成一张渔网 —— 几十条线共用一个方向时,
+     * 眼睛会把它们读成一块灰度背景,而不是"谁连着谁"。
+     * 给每条边一个垂直于自身的偏移(长度越短弧越明显),线束自然散开,
+     * 走向也能读出来了。偏移量由边的 id 决定,所以同一条边每一帧形状一致,
+     * 不会随缩放抖成另一条线。
+     */
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    const seed = hashEdge(e.id);
+    const bow = Math.min(26, len * 0.14) * (seed < 0.5 ? -1 : 1) * (0.55 + seed * 0.9);
+    const cx = (ax + bx) / 2 + (-dy / Math.max(1, len)) * bow;
+    const cy = (ay + by) / 2 + (dx / Math.max(1, len)) * bow;
+
     const layer = e.layer === "semantic" ? "semantic" : "structural";
-    const key = `${e.tone}|${e.active ? 1 : 0}|${layer}|${e.dash ? e.dash.join(",") : "solid"}`;
+    const key = `${e.tone}|${e.active ? 1 : 0}|${layer}|${e.faded ? 1 : 0}|${e.dash ? e.dash.join(",") : "solid"}`;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { tone: e.tone, active: e.active, layer, dash: e.dash, segs: [] };
+      bucket = { tone: e.tone, active: e.active, layer, faded: e.faded, dash: e.dash, segs: [] };
       buckets.set(key, bucket);
     }
-    bucket.segs.push(ax, ay, bx, by);
+    bucket.segs.push(ax, ay, cx, cy, bx, by);
   }
 
   for (const bucket of buckets.values()) {
@@ -264,13 +293,24 @@ function drawEdges(
           ? 0.14
           : 0.18;
 
-    ctx.globalAlpha = base * alpha;
+    // 被关掉的关系淡到几乎只剩痕迹:要能看出"这里原来有线",但不该再抢注意力
+    ctx.globalAlpha = base * alpha * (bucket.faded ? 0.12 : 1);
     ctx.lineWidth = bucket.active ? 1.2 : semantic ? 1 : 0.6;
 
+    // 语义边让虚线缓缓流动:线是"活的",静态的虚线看起来只是样式
+    if (semantic) {
+      ctx.lineDashOffset = -flow;
+    }
+
     ctx.beginPath();
-    for (let i = 0; i < bucket.segs.length; i += 4) {
+    for (let i = 0; i < bucket.segs.length; i += 6) {
       ctx.moveTo(bucket.segs[i] ?? 0, bucket.segs[i + 1] ?? 0);
-      ctx.lineTo(bucket.segs[i + 2] ?? 0, bucket.segs[i + 3] ?? 0);
+      ctx.quadraticCurveTo(
+        bucket.segs[i + 2] ?? 0,
+        bucket.segs[i + 3] ?? 0,
+        bucket.segs[i + 4] ?? 0,
+        bucket.segs[i + 5] ?? 0,
+      );
     }
     ctx.stroke();
   }
@@ -311,7 +351,7 @@ function drawNodes(
    * 顺序不定,亮度也就不稳定。
    */
   for (const n of scene.nodes) {
-    if (n.dimmed) continue;
+    if (n.dimmed && !n.hovered && !n.selected) continue;
     const i = scene.nodes.indexOf(n);
     const x = fx[i];
     const y = fy[i];
@@ -342,26 +382,36 @@ function drawNodes(
     buckets.push({ idx: [], a: 0.2 + (b / (BUCKETS - 1)) * 0.68, rr: 0.85 + (b / (BUCKETS - 1)) * 0.7 });
   }
   scene.nodes.forEach((n, i) => {
-    if (n.dimmed) return;
     const t = Math.max(0, Math.min(1, Math.log10(n.citations + 1) / Math.max(1, maxLog)));
     buckets[Math.min(BUCKETS - 1, Math.floor(t * BUCKETS))]?.idx.push(i);
   });
 
   for (const bucket of buckets) {
     if (!bucket.idx.length) continue;
-    ctx.globalAlpha = alpha * bucket.a;
+
+    /**
+     * 分两遍画:亮的正常 alpha,被淡出的统一压到 0.18。
+     *
+     * 淡出而不是隐藏,是为了保住用户的空间记忆 —— 关掉一类关系之后,
+     * 那些星还在原来的位置上,只是不再被点亮。
+     */
     ctx.fillStyle = p.ink;
-    ctx.beginPath();
-    for (const i of bucket.idx) {
-      const n = scene.nodes[i];
-      const x = fx[i];
-      const y = fy[i];
-      if (!n || x === undefined || y === undefined) continue;
-      const r = Math.max(0.7, Math.min(9, n.r * scale * bucket.rr));
-      ctx.moveTo(x + r, y);
-      ctx.arc(x, y, r, 0, Math.PI * 2);
+    for (const pass of [0, 1] as const) {
+      ctx.globalAlpha = alpha * bucket.a * (pass === 0 ? 1 : 0.18);
+      ctx.beginPath();
+      for (const i of bucket.idx) {
+        const n = scene.nodes[i];
+        if (!n) continue;
+        if ((pass === 0) !== !n.dimmed) continue;
+        const x = fx[i];
+        const y = fy[i];
+        if (x === undefined || y === undefined) continue;
+        const r = Math.max(0.7, Math.min(9, n.r * scale * bucket.rr)) * (n.dimmed ? 0.72 : 1);
+        ctx.moveTo(x + r, y);
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
+      ctx.fill();
     }
-    ctx.fill();
   }
 
   ctx.restore();

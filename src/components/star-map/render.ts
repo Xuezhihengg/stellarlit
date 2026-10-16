@@ -173,7 +173,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 5b. 语义关系的文字 ----------
-  if (a.edge > 0.01) drawEdgeLabels(ctx, scene, width, height, p, fx, fy, anim, level);
+  if (a.edge > 0.01) drawEdgeLabels(ctx, scene, camera, width, height, p, anim, level);
 
   // ---------- 5. 标签 ----------
   drawLabels(ctx, scene, camera, width, height, p, a, level, fx, fy, anim);
@@ -538,11 +538,10 @@ const EDGE_LABEL_LIMIT = 10;
 function drawEdgeLabels(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
+  camera: Camera,
   width: number,
   height: number,
   p: CanvasPalette,
-  fx: Float64Array,
-  fy: Float64Array,
   anim: AnimState,
   level: ViewLevel,
 ): void {
@@ -587,11 +586,23 @@ function drawEdgeLabels(
   ctx.font = `10.5px ${SANS}`;
 
   for (const e of shown) {
-    const ax = fx[e.a];
-    const ay = fy[e.a];
-    const bx = fx[e.b];
-    const by = fy[e.b];
-    if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
+    /**
+     * 标签锚在**静止坐标**上,不跟着星体漂浮。
+     *
+     * 之前直接用了漂浮后的屏幕坐标,于是每颗星一漂,挂在它边上的文字
+     * 就跟着来回晃 —— 两端一起漂时,标签的位移差不多是星体振幅的一大半。
+     * 星体漂浮是氛围,文字是注解;注解该稳,氛围该动。
+     * 代价是标签不再精确压在浮动的线上,偏移最多几个像素,看不出。
+     */
+    const na = scene.nodes[e.a];
+    const nb = scene.nodes[e.b];
+    if (!na || !nb) continue;
+    const pa = worldToScreen(camera, width, height, na);
+    const pb = worldToScreen(camera, width, height, nb);
+    const ax = pa.x;
+    const ay = pa.y;
+    const bx = pb.x;
+    const by = pb.y;
 
     /**
      * 标签落在**靠近选中星的那一端**,而不是边的中点。
@@ -601,7 +612,9 @@ function drawEdgeLabels(
      * 若干种关系",而不是一堆散落的注释。
      */
     const fromA = e.a === focusIndex;
-    const t = 0.3 + ease * 0.06;
+    // 位置固定:只在出现时淡入,不滑动。之前那 0.06 的位移在长边上
+    // 会被放大成相当明显的一段滑动
+    const t = 0.34;
     const mx = ax + (bx - ax) * (fromA ? t : 1 - t);
     const my = ay + (by - ay) * (fromA ? t : 1 - t);
     if (mx < 46 || mx > width - 46 || my < 30 || my > height - 30) continue;
@@ -647,17 +660,17 @@ function drawCitationParticles(
   if (appear < 0.02) return;
 
   /**
-   * 被隐藏(淡出)的边不画粒子。
+   * 关掉"引用"这个开关,收起的是那张灰色的网,**不是引用关系本身**。
    *
-   * 否则会出现很割裂的画面:线已经淡到几乎看不见了,
-   * 粒子却还亮着在跑 —— 用户会以为"这条边还在",而它其实是被关掉的。
-   * 粒子和线是同一个信息的两种表达,必须同进同退。
+   * 之前粒子跟着边一起隐藏,结果是把引用关掉之后,画面上完全看不出
+   * 谁引用了谁 —— 而引用是这套图谱里唯一**客观可核验**的关系,
+   * 不该被一个展示开关抹掉。现在:线收起来(去噪),方向继续用粒子表达。
+   *
+   * 粒子透明度因此不再接边的淡出进度,淡出的边只稍微压一档,
+   * 免得它比开着的线还抢眼。
    */
   const links = scene.edges.filter(
-    (e) =>
-      e.kind === "CITES" &&
-      !e.faded &&
-      (e.a === focusIndex || e.b === focusIndex),
+    (e) => e.kind === "CITES" && (e.a === focusIndex || e.b === focusIndex),
   );
   if (!links.length) return;
 
@@ -686,9 +699,8 @@ function drawCitationParticles(
     const speed = 0.34 / Math.max(0.4, Math.min(2.2, len / 220));
     const phase = seed;
 
-    // 与线共用透明度:线在淡入淡出时,粒子跟着一起
-    const edgeFade = anim.edgeAlpha.get(e.id) ?? 1;
-    if (edgeFade < 0.05) continue;
+    // 引用边被关掉时粒子仍然保留,只压一档
+    const edgeFade = e.faded ? 0.75 : 1;
 
     for (let k = 0; k < 2; k++) {
       const raw = (time * speed + phase + k * 0.5) % 1;

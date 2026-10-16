@@ -185,7 +185,16 @@ export function StarfieldCanvas({ theme, density = 1, className }: StarfieldCanv
     <canvas
       ref={canvasRef}
       className={className}
-      style={{ position: "fixed", inset: 0, zIndex: 1, display: "block" }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1,
+        display: "block",
+        // canvas 是替换元素:`inset:0` 不会把它拉伸开,必须显式给尺寸,
+        // 否则它保持 300x150 的固有尺寸,而 devicePixelRatio 缩放又会反向放大这个固有尺寸
+        width: "100%",
+        height: "100%",
+      }}
       aria-hidden="true"
     />
   );

@@ -62,12 +62,22 @@ export function stepAnim(
     anim.edgeAlpha.set(e.id, approach(anim.edgeAlpha.get(e.id) ?? 1, target, dt, 7));
   }
 
-  // 换了选中项就重放入场:这是"点了一颗星"的反馈,必须每次都给
-  if (selectedId !== anim.focusId) {
-    anim.focusId = selectedId;
-    if (selectedId) anim.focus = 0;
+  /**
+   * 入场与退场都要有动效。
+   *
+   * 关键在 focusId 的生命周期:取消选中时**不能**立刻把它清空 ——
+   * 一旦清空,就没有任何节点再承载 focus 进度,退场动画等于没有。
+   * 所以先让它继续衰减,衰减到底再释放。
+   */
+  if (selectedId) {
+    if (selectedId !== anim.focusId) {
+      anim.focusId = selectedId;
+      anim.focus = 0;
+    }
+  } else if (anim.focus < 0.01) {
+    anim.focusId = null;
   }
-  anim.focus = approach(anim.focus, selectedId ? 1 : 0, dt, 6);
+  anim.focus = approach(anim.focus, selectedId ? 1 : 0, dt, 5.5);
 }
 
 export interface RenderInput {
@@ -317,17 +327,22 @@ function drawEdges(
     const dy = by - ay;
     const len = Math.hypot(dx, dy);
     const seed = hashEdge(e.id);
-    const bow = Math.min(26, len * 0.14) * (seed < 0.5 ? -1 : 1) * (0.55 + seed * 0.9);
+    // 下限 7px:短边若按比例算几乎就是直线,而"线都是弯的"是这一版的整体语言
+    const bow = Math.max(7, Math.min(30, len * 0.17)) * (seed < 0.5 ? -1 : 1) * (0.6 + seed * 0.8);
     const cx = (ax + bx) / 2 + (-dy / Math.max(1, len)) * bow;
     const cy = (ay + by) / 2 + (dx / Math.max(1, len)) * bow;
 
     const layer = e.layer === "semantic" ? "semantic" : "structural";
-    const key = `${e.tone}|${e.active ? 1 : 0}|${layer}|${e.faded ? 1 : 0}|${e.dash ? e.dash.join(",") : "solid"}`;
+    // 高亮同样挂在 focusId 上:取消选中后焦点边的亮度是"收回"而不是"跳回"
+    const focused =
+      anim.focusId !== null &&
+      (scene.nodes[e.a]?.id === anim.focusId || scene.nodes[e.b]?.id === anim.focusId);
+    const key = `${e.tone}|${focused ? 1 : 0}|${layer}|${e.faded ? 1 : 0}`;
     let bucket = buckets.get(key);
     if (!bucket) {
       bucket = {
         tone: e.tone,
-        active: e.active,
+        active: focused,
         layer,
         faded: e.faded,
         dash: e.dash,
@@ -354,17 +369,10 @@ function drawEdges(
      * 必须从骨架里浮出来。
      */
     const semantic = bucket.layer === "semantic";
-    const base = bucket.active
-      ? semantic
-        ? 0.78
-        : 0.45
-      : semantic
-        ? level === "paper"
-          ? 0.46
-          : 0.4
-        : level === "paper"
-          ? 0.14
-          : 0.18;
+    // 在"静"与"亮"两档之间按 focus 插值,高亮与退场都是连续的
+    const idle = semantic ? (level === "paper" ? 0.46 : 0.4) : level === "paper" ? 0.14 : 0.18;
+    const lit = semantic ? 0.78 : 0.45;
+    const base = bucket.active ? idle + (lit - idle) * Math.max(0, Math.min(1, anim.focus)) : idle;
 
     /*
       边不按条动画(那要几千个浮点数),而是同桶共用一个当前透明度:
@@ -432,7 +440,9 @@ function drawNodes(
     const y = fy[i];
     if (!n || x === undefined || y === undefined) continue;
 
-    const focus = n.selected ? anim.focus : 0;
+    // focus 挂在 focusId 上而不是 selected:退场时那颗星已经不 selected 了,
+    // 但动画还要在它身上播完
+    const focus = n.id === anim.focusId ? anim.focus : 0;
     const nodeAlpha = anim.nodeAlpha.get(n.id) ?? 1;
     const a = alpha * nodeAlpha;
     if (a < 0.01) continue;
@@ -441,15 +451,21 @@ function drawNodes(
 
     const twinkle = 0.86 + 0.14 * Math.sin(time * 1.25 * n.motion.tws + n.motion.tw);
     const brightness = Math.max(0, Math.min(1, Math.log10(n.citations + 1) / Math.max(1, maxLog)));
-    const base = Math.max(2.2, Math.min(9, n.r * scale)) * (0.86 + brightness * 0.4);
-    // 选中:星核放大、光晕张开 —— 用一个进度值驱动,所以是"涨开"而不是"跳大"
-    const r = base * (1 + focus * 0.55) * (n.hovered ? 1.35 : 1) * (0.96 + 0.08 * twinkle);
+    const base = Math.max(2.2, Math.min(11, n.r * scale));
+    // 选中:幅度刻意压小 —— 反馈要看得见,但不该把整张图的注意力抢走
+    const r = base * (1 + focus * 0.22) * (n.hovered ? 1.25 : 1) * (0.96 + 0.08 * twinkle);
 
-    // 光晕:颜色来自所属前沿,选中时更亮更大
+    /**
+     * 光晕大小也跟着引用量走。
+     *
+     * 高被引的论文在学术上就是"更亮的星",给它更大的光晕是在用视觉
+     * 复述一个真实事实;所有星用同样的光晕倍数,等于把这层信息丢掉。
+     */
     const glow = (ga: number) => hexA(domainToneBase(n.tone, themeNow), ga);
-    const haloR = r * (n.hovered || n.selected ? 9 : 5.5) * (1 + focus * 0.35);
+    const haloScale = (4 + brightness * 5.5) * (1 + focus * 0.18);
+    const haloR = r * (n.hovered ? haloScale * 1.35 : haloScale);
     const g = ctx.createRadialGradient(x, y, 0, x, y, haloR);
-    g.addColorStop(0, glow((n.hovered || n.selected ? 0.34 : 0.2) * twinkle * (1 + focus * 0.5)));
+    g.addColorStop(0, glow((n.hovered || focus > 0.01 ? 0.3 : 0.2) * twinkle * (1 + focus * 0.3)));
     g.addColorStop(0.45, glow(0.06 * twinkle));
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.globalAlpha = a;
@@ -475,7 +491,7 @@ function drawNodes(
       ctx.arc(x, y, (r + 7) * pulse, 0, Math.PI * 2);
       ctx.stroke();
     }
-    if (n.hovered && !n.selected) {
+    if (n.hovered && focus < 0.01) {
       ctx.globalAlpha = 0.55 * a;
       ctx.strokeStyle = p.ink2;
       ctx.lineWidth = 1;
@@ -484,13 +500,13 @@ function drawNodes(
       ctx.stroke();
     }
     if (focus > 0.01) {
-      // 环从星体向外张开:半径随进度增长,透明度在末端收回
+      // 环只向外走一点点:6px 的行程,退场时沿同一条路径收回
       const ease = 1 - (1 - focus) * (1 - focus);
-      ctx.globalAlpha = a * focus * (1 - focus * 0.25) * 0.9;
+      ctx.globalAlpha = a * focus * 0.6;
       ctx.strokeStyle = p.accent;
-      ctx.lineWidth = 1.3;
+      ctx.lineWidth = 1.1;
       ctx.beginPath();
-      ctx.arc(x, y, r + 6 + ease * 14, 0, Math.PI * 2);
+      ctx.arc(x, y, r + 4 + ease * 6, 0, Math.PI * 2);
       ctx.stroke();
     }
   }
@@ -526,7 +542,7 @@ function drawEdgeLabels(
   level: ViewLevel,
 ): void {
   if (!anim.focusId) return;
-  if (anim.focus < 0.3) return;
+  if (anim.focus < 0.12) return;
 
   /**
    * 直接从"当前选中了谁"出发找边,而不是依赖场景里预先算好的 active 标志。
@@ -545,7 +561,7 @@ function drawEdgeLabels(
 
   if (!shown.length) return;
 
-  const appear = Math.min(1, Math.max(0, (anim.focus - 0.3) / 0.7));
+  const appear = Math.min(1, Math.max(0, (anim.focus - 0.12) / 0.62));
 
   ctx.save();
   ctx.textAlign = "center";
@@ -649,13 +665,13 @@ function drawLabels(
 
       // 选中项标题:从 12px 涨到 15.5px,透明度同步拉满 —— 用一个进度值驱动,
       // 所以它是"涨开"而不是"跳大"
-      const size = 12 + focus * 3.5;
+      const size = 12 + focus * 1.6;
       ctx.font = `${isKey ? size : 10.5}px ${SANS}`;
       ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel * (n.selected ? Math.min(1, anim.focus * 3) : 1);
       ctx.fillStyle = n.selected ? p.ink : p.ink2;
 
       // 标签压在星体上会互相干扰,统一挪到星体下方
-      ctx.fillText(text, c.x, c.y + r + 13 + focus * 3);
+      ctx.fillText(text, c.x, c.y + r + 13 + focus * 2);
     }
   }
 

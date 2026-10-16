@@ -193,10 +193,14 @@ const EDGE_LABEL: Record<string, string> = {
   SEMANTIC_NEIGHBOR: "语义近邻",
 };
 
-const EDGE_DASH: Record<string, number[] | null> = {
-  CONTEMPORARY_OF: [2, 7],
-  POTENTIAL_LINK: [3, 5],
-};
+/**
+ * 所有关系都用实线。
+ *
+ * 曾经用虚线区分"同期"(平行但未交汇),但虚线在弧线上会断成一段段,
+ * 弧线的走向反而读不出来了 —— 而走向正是这条边唯一的信息。
+ * 关系类型的区分交给颜色与边上的文字,线型统一。
+ */
+const SOLID: number[] | null = null;
 
 const isSemantic = (kind: string): boolean =>
   kind !== "CITES" && kind !== "MENTIONS" && kind !== "AUTHORED_BY" && kind !== "PUBLISHED_IN";
@@ -208,11 +212,16 @@ const isSemantic = (kind: string): boolean =>
  * 两个通道表达同一个变量是浪费。年份映射到大小之后,
  * 「越新的工作越大」在缩小时会自然形成由内向外的时间梯度。
  */
-function paperRadius(year: number, minYear: number, maxYear: number): number {
-  if (year <= 0) return 4;
-  const span = Math.max(1, maxYear - minYear);
-  const t = (year - minYear) / span;
-  return 3.2 + t * 3.4;
+/**
+ * 论文的视觉半径 —— 由**引用量**决定。
+ *
+ * 用对数而不是线性:引用量是重尾分布的,线性映射会让少数几篇高被引
+ * 把其余全部压成一个点。取对数之后,"1 万引"和"100 引"的差距
+ * 仍然看得出来,但"1000 引"与"1100 引"不会差出一个量级。
+ */
+function paperRadius(citations: number, maxCitations: number): number {
+  const t = Math.log10(Math.max(1, citations) + 1) / Math.log10(Math.max(10, maxCitations) + 1);
+  return 2.6 + Math.max(0, Math.min(1, t)) * 4.6;
 }
 
 export function buildScene(
@@ -224,9 +233,7 @@ export function buildScene(
   const { selectedId = null, hoveredId = null, dimmedKinds, minYear = null } = opts;
 
   const paperNodes = graph.nodes.filter((n) => n.kind === "paper");
-  const years = paperNodes.map((p) => p.year).filter((y) => y > 0);
-  const minYearData = years.length ? Math.min(...years) : 2000;
-  const maxYearData = years.length ? Math.max(...years) : new Date().getFullYear();
+  const maxCitations = paperNodes.reduce((m, p) => Math.max(m, p.citations), 10);
 
   // 节点高光需要知道「它参与了哪些关系」,先扫一遍语义边
   const relationKinds = new Map<NodeId, Set<string>>();
@@ -251,7 +258,7 @@ export function buildScene(
       kind: "paper",
       x: pos.x,
       y: pos.y,
-      r: paperRadius(node.year, minYearData, maxYearData),
+      r: paperRadius(node.citations, maxCitations),
       label: node.title,
       tone: 0,
       year: node.year,
@@ -419,7 +426,7 @@ export function buildScene(
       weight: e.weight,
       confidence: e.confidence,
       tone: EDGE_TONE[e.kind] ?? "ink4",
-      dash: EDGE_DASH[e.kind] ?? null,
+      dash: SOLID,
       active: activeIds.size > 0 && (activeIds.has(e.source) || activeIds.has(e.target)),
       faded: Boolean(dimmedKinds?.has(e.kind)),
       label: EDGE_LABEL[e.kind] ?? e.kind,

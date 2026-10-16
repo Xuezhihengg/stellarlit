@@ -62,10 +62,17 @@ export function AssistantRail({
        * 浮窗让星图完整地铺满整屏,面板像一张浮在星空上的纸 ——
        * 这更贴合"星图是主角、助手是旁白"的关系。
        */
-      className="pointer-events-auto fixed top-4 right-4 bottom-4 z-30 flex flex-col overflow-hidden rounded-2xl border border-hair-2 bg-bg/78 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.85)] backdrop-blur-xl transition-transform duration-[--dur-base]"
+      className="pointer-events-auto fixed top-4 right-4 bottom-4 z-30 flex flex-col overflow-hidden rounded-2xl border border-hair-2 bg-bg/78 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.85)] backdrop-blur-xl transition-[transform,opacity] duration-[--dur-slow]"
       style={{
         width: 372,
-        transform: collapsed ? "translateX(calc(100% + 16px))" : "translateX(0)",
+        transformOrigin: "right center",
+        transform: collapsed
+          ? "translateX(calc(100% + 20px)) scale(0.985)"
+          : "translateX(0) scale(1)",
+        opacity: collapsed ? 0 : 1,
+        // 收起时不能被点到(它已经滑出画面,但仍在布局里)
+        pointerEvents: collapsed ? "none" : "auto",
+        transitionTimingFunction: "var(--ease-out)",
       }}
       aria-label="研究助手"
     >
@@ -174,43 +181,43 @@ export function AssistantRail({
       </aside>
 
       {/*
-      开关固定在**侧栏左边缘**上,而不是跟着侧栏一起滑走。
+        开关做成圆形浮窗,骑在侧栏左边缘上。
 
-      两个状态用同一个屏幕锚点:开着时它骑在侧栏边界线上(一半压着面板、
-      一半浮在星空上),收起后停在屏幕右缘 —— 位置几乎没变,
-      所以用户不需要重新找它。这也让"打开/收起"读起来像同一个动作的往复,
-      而不是两个不同的按钮。这里刻意不放进 <aside> 里:一旦放进去,
-      它就会跟着面板一起滑出屏幕,收起后就再也点不开了。
-    */}
-    <button
-      type="button"
-      onClick={onToggleCollapse}
-      aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
-      aria-expanded={!collapsed}
-      className="group fixed top-1/2 z-40 flex h-14 w-[22px] items-center justify-center rounded-full border border-hair-2 bg-bg/85 backdrop-blur-md transition-[right,background-color,border-color] duration-[--dur-base] hover:border-ink-4 hover:bg-bg"
-      style={{
-        right: collapsed ? 18 : 384,
-        transform: collapsed ? "translate(0, -50%)" : "translate(50%, -50%)",
-        transitionTimingFunction: "var(--ease-out)",
-      }}
-    >
-      <svg
-        width="10"
-        height="10"
-        viewBox="0 0 10 10"
-        aria-hidden="true"
-        className={`transition-transform duration-[--dur-base] ${collapsed ? "rotate-180" : ""}`}
-        style={{ transitionTimingFunction: "var(--ease-out)" }}
+        两个状态用同一个屏幕锚点:开着时它一半压在面板上、一半浮在星空里,
+        收起后停在屏幕右缘 —— 位置几乎没动,所以不需要重新找它。
+        这也让"打开 / 收起"读起来是同一个动作的往复,而不是两个按钮。
+
+        它刻意放在 <aside> **外面**:放进去就会跟着面板一起滑出屏幕,
+        收起之后就再也点不开了。
+      */}
+      <button
+        type="button"
+        onClick={onToggleCollapse}
+        aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
+        aria-expanded={!collapsed}
+        className="group fixed top-1/2 z-40 grid h-9 w-9 place-items-center rounded-full border border-hair-2 bg-bg/85 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md transition-[right,color,background-color,border-color] duration-[--dur-base] hover:border-ink-4 hover:text-ink-2"
+        style={{
+          right: collapsed ? 18 : 384,
+          transform: collapsed ? "translate(0, -50%)" : "translate(50%, -50%)",
+          transitionTimingFunction: "var(--ease-out)",
+        }}
       >
-        <path
-          d="M6.4 1.6 L2.6 5 L6.4 8.4"
-          stroke="currentColor"
-          strokeWidth="1.2"
-          fill="none"
-          strokeLinecap="round"
-          className="text-ink-3 transition-colors group-hover:text-ink-2"
-        />
-      </svg>
+        <svg
+          width="11"
+          height="11"
+          viewBox="0 0 10 10"
+          aria-hidden="true"
+          className={`transition-transform duration-[--dur-base] ${collapsed ? "rotate-180" : ""}`}
+          style={{ transitionTimingFunction: "var(--ease-out)" }}
+        >
+          <path
+            d="M6.4 1.6 L2.6 5 L6.4 8.4"
+            stroke="currentColor"
+            strokeWidth="1.3"
+            fill="none"
+            strokeLinecap="round"
+          />
+        </svg>
       </button>
     </>
   );

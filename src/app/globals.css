@@ -1,0 +1,169 @@
+@import "tailwindcss";
+
+/* ===========================================================================
+   设计令牌
+
+   两套主题不是简单的反相,而是两种介质:
+     夜间 —— 发光体在深空里(星体是光源,线是引力)
+     白天 —— 墨点落在纸上(星体是墨点,线是笔迹)
+   详见 docs/知识图谱模型.md §9 视觉编码。
+   =========================================================================== */
+
+:root {
+  --line: #ffffff; /* 分隔线基色:夜间是白,白天变墨 */
+  --bg: #07080a;
+  --surface: #0b0d10;
+
+  --ink: #f2f4f7;
+  --ink-2: #aeb6c2;
+  --ink-3: #6c7480;
+  --ink-4: #464c56;
+
+  --hair: color-mix(in srgb, var(--line) 10%, transparent);
+  --hair-2: color-mix(in srgb, var(--line) 18%, transparent);
+
+  --accent: #a8c7fa; /* 唯一的冷色强调:AI 与检索路径 */
+  --warm: #e0b872; /* 唯一的暖色:空缺与未探索 */
+  --alert: #e09a9a; /* 暖红:仅用于「矛盾」关系 */
+
+  --fontstack-sans:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+  --fontstack-mono: "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* 动效时长:单一来源,丝滑的前提是所有东西用同一条曲线 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 160ms;
+  --dur-base: 280ms;
+  --dur-slow: 620ms;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f3ef; /* 微暖的纸白,不是纯白 */
+  --surface: #ffffff;
+  --line: #14181f;
+
+  --ink: #14181f;
+  --ink-2: #3e4652;
+  --ink-3: #6b7480;
+  --ink-4: #9aa2ad;
+
+  --hair: rgba(20, 26, 34, 0.1);
+  --hair-2: rgba(20, 26, 34, 0.18);
+
+  --accent: #2f63c4; /* 压深,否则在纸白上站不住 */
+  --warm: #a8761f;
+  --alert: #b4433c;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-ink-4: var(--ink-4);
+  --color-hair: var(--hair);
+  --color-hair-2: var(--hair-2);
+  --color-accent: var(--accent);
+  --color-warm: var(--warm);
+  --color-alert: var(--alert);
+
+  --font-sans: var(--fontstack-sans);
+  --font-mono: var(--fontstack-mono);
+
+  --ease-out: var(--ease-out);
+  --ease-in-out: var(--ease-in-out);
+}
+
+/* ===========================================================================
+   基础
+   =========================================================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--fontstack-sans);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  transition:
+    background var(--dur-slow) var(--ease-out),
+    color var(--dur-slow) var(--ease-out);
+}
+
+/* 主题切换时,画布之外的区域整片淡入淡出,而不是瞬间反色 */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(120% 80% at 50% 40%, transparent 30%, var(--bg) 100%);
+  opacity: 0.9;
+  transition: opacity var(--dur-slow) var(--ease-out);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+
+/* 细滚动条:面板里那一条几乎看不见的线就够了 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hair-2) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--hair-2);
+  border-radius: 3px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* 尊重系统的减弱动效设置:丝滑不等于强迫所有人看动效 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

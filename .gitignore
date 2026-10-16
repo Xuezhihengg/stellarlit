@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+.pnpm-store/
+.pnpm-cache/
+
+# Next.js
+.next/
+out/
+build/
+next-env.d.ts
+*.tsbuildinfo
+
+# 环境变量(密钥绝不入库 —— 赛事红线)
+.env
+.env.*
+!.env.example
+
+# 系统
+.DS_Store
+*.log
+
+# 本地预计算缓存:可由上游重建,不入库
+/data/cache/

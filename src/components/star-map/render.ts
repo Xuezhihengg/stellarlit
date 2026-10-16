@@ -168,6 +168,11 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 5a. 引用方向的粒子 ----------
+  /**
+   * 粒子常驻,所以放在"选中相关"的绘制之外 —— 它是主干信息,
+   * 不是选中之后的详情。领域层除外:那个尺度上论文都还在,
+   * 粒子会变成一片没意义的噪点。
+   */
   if (a.edge > 0.01 && level !== "domain") {
     drawCitationParticles(ctx, scene, p, fx, fy, anim, time);
   }
@@ -653,11 +658,13 @@ function drawCitationParticles(
   anim: AnimState,
   time: number,
 ): void {
-  const focusIndex = scene.nodes.findIndex((n) => n.id === anim.focusId);
-  if (focusIndex < 0) return;
-
-  const appear = Math.min(1, Math.max(0, (anim.focus - 0.15) / 0.7));
-  if (appear < 0.02) return;
+  /**
+   * 粒子常驻,不再等选中才出现。
+   *
+   * 引用方向是这个图谱里唯一客观可核验的关系,它本身就值得一直看得见 ——
+   * 之前把它藏在"点击之后"是把它当成了详情,而它其实是主干信息。
+   */
+  const focusIndex = anim.focusId ? scene.nodes.findIndex((n) => n.id === anim.focusId) : -1;
 
   /**
    * 粒子和线**同进同退** —— 线被关掉,粒子也跟着关掉。
@@ -679,6 +686,14 @@ function drawCitationParticles(
   ctx.globalCompositeOperation = p.blend;
 
   for (const e of links) {
+    /**
+     * 选中项相连的边,粒子更强一档。
+     *
+     * 选中是"我在看这颗星"的声明,与它相关的引用方向理应更醒目 ——
+     * 但只是"更醒目",不是"换一套视觉",所以仍是同一套参数乘以一个系数。
+     */
+    const focused = focusIndex >= 0 && (e.a === focusIndex || e.b === focusIndex);
+    const boost = focused ? 1.75 : 1;
     const ax = fx[e.a];
     const ay = fy[e.a];
     const bx = fx[e.b];
@@ -713,24 +728,24 @@ function drawCitationParticles(
 
       // 两端渐隐:粒子从引用者身上"生成",到被引用者身上"汇入"
       const fade = Math.min(1, Math.min(u, 1 - u) / 0.14);
-      const strength = fade * appear * edgeFade;
+      const strength = Math.min(1, fade * edgeFade * boost);
+      if (strength < 0.02) continue;
 
-      // 粒子要"看得见但不去抢戏":尺寸与亮度都比上一版收敛将近一半
-      const r = 1.0 + 0.35 * fade;
+      const r = (1.5 + 0.55 * fade) * (0.9 + 0.35 * boost);
 
-      const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3);
-      g.addColorStop(0, hexA(p.accent, 0.42 * strength));
-      g.addColorStop(0.4, hexA(p.accent, 0.12 * strength));
+      const g = ctx.createRadialGradient(px, py, 0, px, py, r * 3.6);
+      g.addColorStop(0, hexA(p.accent, Math.min(1, 0.85 * strength)));
+      g.addColorStop(0.4, hexA(p.accent, Math.min(1, 0.24 * strength)));
       g.addColorStop(1, "rgba(0,0,0,0)");
       ctx.fillStyle = g;
       ctx.beginPath();
-      ctx.arc(px, py, r * 3, 0, Math.PI * 2);
+      ctx.arc(px, py, r * 3.6, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.globalAlpha = 0.62 * strength;
-      ctx.fillStyle = p.ink2;
+      ctx.globalAlpha = Math.min(1, 0.95 * strength);
+      ctx.fillStyle = p.ink;
       ctx.beginPath();
-      ctx.arc(px, py, r * 0.5, 0, Math.PI * 2);
+      ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
       ctx.fill();
     }
   }

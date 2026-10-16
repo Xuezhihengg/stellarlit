@@ -12,6 +12,7 @@
  */
 
 import { worldToScreen, type Camera } from "@/lib/design/camera";
+import { edgeCurve, edgeSeed, pointOnEdge } from "@/lib/design/edge-curve";
 import { placeLabelBlock, wrapByWidth } from "@/lib/design/label-layout";
 import { domainTone, domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
 import type { Scene, SceneBlob, SceneEdge } from "@/lib/graph/scene";
@@ -181,7 +182,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 5b. 语义关系的文字 ----------
-  if (a.edge > 0.01) drawEdgeLabels(ctx, scene, camera, width, height, p, anim, level);
+  if (a.edge > 0.01) {
+    drawEdgeLabels(ctx, scene, fx, fy, camera.scale, width, height, p, anim, level);
+  }
 
   // ---------- 5. 标签 ----------
   drawLabels(ctx, scene, camera, width, height, p, a, level, fx, fy, anim);
@@ -270,16 +273,6 @@ function drawBlobs(
 // 边
 // ---------------------------------------------------------------------------
 
-/** 由边 id 派生一个稳定的 0-1 数:同一条边每帧形状一致。 */
-function hashEdge(id: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return (h >>> 0) / 4294967296;
-}
-
 function drawEdges(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
@@ -327,23 +320,8 @@ function drawEdges(
       continue;
     }
 
-    /**
-     * 边画成**弧线**而不是直线。
-     *
-     * 直线在密集处会让整张图变成一张渔网 —— 几十条线共用一个方向时,
-     * 眼睛会把它们读成一块灰度背景,而不是"谁连着谁"。
-     * 给每条边一个垂直于自身的偏移(长度越短弧越明显),线束自然散开,
-     * 走向也能读出来了。偏移量由边的 id 决定,所以同一条边每一帧形状一致,
-     * 不会随缩放抖成另一条线。
-     */
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len = Math.hypot(dx, dy);
-    const seed = hashEdge(e.id);
-    // 下限 7px:短边若按比例算几乎就是直线,而"线都是弯的"是这一版的整体语言
-    const bow = Math.max(7, Math.min(30, len * 0.17)) * (seed < 0.5 ? -1 : 1) * (0.6 + seed * 0.8);
-    const cx = (ax + bx) / 2 + (-dy / Math.max(1, len)) * bow;
-    const cy = (ay + by) / 2 + (dx / Math.max(1, len)) * bow;
+    // 形状只有一份来源(与粒子轨迹、关系标签共用),见 lib/design/edge-curve.ts
+    const { cx, cy } = edgeCurve(ax, ay, bx, by, e.id);
 
     const layer = e.layer === "semantic" ? "semantic" : "structural";
     // 高亮同样挂在 focusId 上:取消选中后焦点边的亮度是"收回"而不是"跳回"
@@ -535,6 +513,98 @@ function drawNodes(
 /** 同时最多标几条边。多了会糊成一片注释,反而没人读。 */
 const EDGE_LABEL_LIMIT = 10;
 
+/** 关系标签落在边上的位置:0.34 = 靠近选中星那一端的三分之一处 */
+const EDGE_LABEL_T = 0.34;
+
+/**
+ * 压在选中标题上时,沿自己的边让开的档位(相对于 EDGE_LABEL_T)。
+ *
+ * 顺序是"先小后大、正负交替":先试原位,再就近挪 —— 挪得越少,标签越像是
+ * 本来就长在那里。**不会因为让不开就不画**:关系是信息,少一条就是少读一条;
+ * 让不开时退回事先算好的原位,宁可叠一点,也不凭空消失。
+ */
+const EDGE_LABEL_SHIFT = [0.08, -0.08, 0.16, -0.16, 0.26, -0.26, 0.36, -0.36] as const;
+
+/** 屏幕上的一个矩形:关系标签用它与选中标题避让。 */
+interface Box {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
+function boxesHit(a: Box, b: Box): boolean {
+  return a.x0 < b.x1 && a.x1 > b.x0 && a.y0 < b.y1 && a.y1 > b.y0;
+}
+
+/** 以 (x,y) 为中心的一段文字,是否压住了那块地。 */
+function labelsClash(
+  at: { x: number; y: number },
+  halfW: number,
+  halfH: number,
+  area: Box,
+): boolean {
+  return boxesHit(
+    { x0: at.x - halfW, y0: at.y - halfH, x1: at.x + halfW, y1: at.y + halfH },
+    area,
+  );
+}
+
+/**
+ * 选中星与它的完整标题占的那块地:关系标签不许进去。
+ *
+ * 抢位置时永远是注解输 —— 标题回答"这颗星是什么",注解回答"它和谁有关",
+ * 前者读不到,后者就没有意义。
+ *
+ * 这个框**照实算**:形状交给 drawLabels 用的同一套排版函数,不是拍一个
+ * 大概的范围。框太大,标签会被赶到很远的边上(于是"关系"读起来离星很远);
+ * 框太小,两段文字又会叠在一起。
+ */
+function focusArea(
+  ctx: CanvasRenderingContext2D,
+  scene: Scene,
+  fx: Float64Array,
+  fy: Float64Array,
+  scale: number,
+  width: number,
+  height: number,
+  index: number,
+): Box | null {
+  const n = scene.nodes[index];
+  const x = fx[index];
+  const y = fy[index];
+  if (!n || x === undefined || y === undefined) return null;
+
+  const r = Math.max(2.5, n.r * scale);
+  let box: Box = { x0: x - r - 10, y0: y - r - 10, x1: x + r + 10, y1: y + r + 10 };
+
+  ctx.font = `${FOCUS_TITLE.px}px ${SANS}`;
+  const lines = wrapCached(ctx, n.label, FOCUS_TITLE.maxW, FOCUS_TITLE.maxLines);
+  if (!lines.length) return box;
+
+  const lineH = FOCUS_TITLE.px * FOCUS_TITLE.lineH;
+  const block = placeLabelBlock({
+    lines,
+    lineHeight: lineH,
+    anchor: { x, y: y + r + 13 },
+    viewport: { width, height },
+    padding: FOCUS_TITLE.pad,
+    measure: (s) => ctx.measureText(s).width,
+  });
+  const first = block.positions[0];
+  const last = block.positions[block.positions.length - 1];
+  if (!first || !last) return box;
+
+  const pad = 6;
+  box = {
+    x0: Math.min(box.x0, first.x - block.width / 2 - pad),
+    y0: box.y0,
+    x1: Math.max(box.x1, first.x + block.width / 2 + pad),
+    y1: Math.max(box.y1, last.y + lineH / 2 + pad),
+  };
+  return box;
+}
+
 /**
  * 把关系类型写在边旁边。
  *
@@ -547,7 +617,9 @@ const EDGE_LABEL_LIMIT = 10;
 function drawEdgeLabels(
   ctx: CanvasRenderingContext2D,
   scene: Scene,
-  camera: Camera,
+  fx: Float64Array,
+  fy: Float64Array,
+  scale: number,
   width: number,
   height: number,
   p: CanvasPalette,
@@ -592,26 +664,37 @@ function drawEdgeLabels(
   ctx.save();
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+
+  const halfH = 9;
+  const gapX = 7;
+
+  /**
+   * 选中星与它的标题占的那块地。
+   *
+   * 关系标签宁可让一让,也不该压在这句话上 —— 标题回答"这颗星是什么",
+   * 注解回答"它和谁有关";两段字叠在一起时,两句话都读不成。
+   */
+  const guard = focusArea(ctx, scene, fx, fy, scale, width, height, focusIndex);
+
   ctx.font = `10.5px ${SANS}`;
 
   for (const e of shown) {
     /**
-     * 标签锚在**静止坐标**上,不跟着星体漂浮。
+     * 标签**落在自己那条边上**,并跟着它一起走。
      *
-     * 之前直接用了漂浮后的屏幕坐标,于是每颗星一漂,挂在它边上的文字
-     * 就跟着来回晃 —— 两端一起漂时,标签的位移差不多是星体振幅的一大半。
-     * 星体漂浮是氛围,文字是注解;注解该稳,氛围该动。
-     * 代价是标签不再精确压在浮动的线上,偏移最多几个像素,看不出。
+     * 两个"跟着":取漂浮后的屏幕坐标(与画线、粒子同一份),并且取的是
+     * 弧线上参数 t 处的点(与画线、粒子同一个函数)。
+     *
+     * 之前这里取的是**静止坐标 + 直线中点**:边画成弧线、两端还会漂,
+     * 于是标签悬在离自己那条线十几像素的地方 —— 越放大越明显,
+     * 读起来像一句不属于任何一条线的注释。注解必须长在它注解的东西上。
      */
-    const na = scene.nodes[e.a];
-    const nb = scene.nodes[e.b];
-    if (!na || !nb) continue;
-    const pa = worldToScreen(camera, width, height, na);
-    const pb = worldToScreen(camera, width, height, nb);
-    const ax = pa.x;
-    const ay = pa.y;
-    const bx = pb.x;
-    const by = pb.y;
+    const ax = fx[e.a];
+    const ay = fy[e.a];
+    const bx = fx[e.b];
+    const by = fy[e.b];
+    if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
+    const curve = edgeCurve(ax, ay, bx, by, e.id);
 
     /**
      * 标签落在**靠近选中星的那一端**,而不是边的中点。
@@ -623,9 +706,23 @@ function drawEdgeLabels(
     const fromA = e.a === focusIndex;
     // 位置固定:只在出现时淡入,不滑动。之前那 0.06 的位移在长边上
     // 会被放大成相当明显的一段滑动
-    const t = 0.34;
-    const mx = ax + (bx - ax) * (fromA ? t : 1 - t);
-    const my = ay + (by - ay) * (fromA ? t : 1 - t);
+    const base = fromA ? EDGE_LABEL_T : 1 - EDGE_LABEL_T;
+    const halfW = ctx.measureText(e.label).width / 2 + gapX;
+
+    // 原位;压住标题就沿自己的边往外让,让不开就回到原位(不丢注解)
+    let at = pointOnEdge(curve, base);
+    if (guard && labelsClash(at, halfW, halfH, guard)) {
+      for (const shift of EDGE_LABEL_SHIFT) {
+        const cand = pointOnEdge(curve, Math.max(0.08, Math.min(0.92, base + shift)));
+        // 别让到另一端的星身上去
+        if (Math.hypot(cand.x - bx, cand.y - by) < 26) continue;
+        if (labelsClash(cand, halfW, halfH, guard)) continue;
+        at = cand;
+        break;
+      }
+    }
+    const mx = at.x;
+    const my = at.y;
     if (mx < 46 || mx > width - 46 || my < 30 || my > height - 30) continue;
 
     /**
@@ -739,14 +836,9 @@ function drawCitationParticles(
     const by = fy[e.b];
     if (ax === undefined || ay === undefined || bx === undefined || by === undefined) continue;
 
-    // 与 drawEdges 用同一套弧线参数,粒子才会正好落在线上
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len = Math.hypot(dx, dy);
-    const seed = hashEdge(e.id);
-    const bow = Math.max(7, Math.min(30, len * 0.17)) * (seed < 0.5 ? -1 : 1) * (0.6 + seed * 0.8);
-    const cx = (ax + bx) / 2 + (-dy / Math.max(1, len)) * bow;
-    const cy = (ay + by) / 2 + (dx / Math.max(1, len)) * bow;
+    // 与画线、关系标签共用同一条曲线,粒子才会正好落在线上
+    const curve = edgeCurve(ax, ay, bx, by, e.id);
+    const seed = edgeSeed(e.id);
 
     // 方向只由**引用**决定;语义边自己的方向与它无关
     const citeFrom = e.citationFrom ?? e.from;
@@ -771,9 +863,7 @@ function drawCitationParticles(
     {
       const raw = (time * speed + phase) % 1;
       const u = forward ? raw : 1 - raw;
-      const iu = 1 - u;
-      const px = iu * iu * ax + 2 * iu * u * cx + u * u * bx;
-      const py = iu * iu * ay + 2 * iu * u * cy + u * u * by;
+      const { x: px, y: py } = pointOnEdge(curve, u);
 
       // 两端渐隐:粒子从引用者身上"生成",到被引用者身上"汇入"
       /**

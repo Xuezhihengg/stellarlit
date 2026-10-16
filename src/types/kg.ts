@@ -338,6 +338,19 @@ export interface RelationPreset {
   negativeExamples: string;
   directed: boolean;
   hardConstraints: RelationHardConstraints;
+  /**
+   * 证据标准 —— 必须与**手头真的有什么数据**对齐。
+   *
+   *   structural:依据引文结构与元数据即可判定。摘要里通常不会写明
+   *              「我们用 X 作为基线」(那写在正文的实验章节),
+   *              所以要求逐字引用会把所有候选都判死。
+   *   textual:   必须给出可核验的原文片段。用于判断「思路类似」「结论矛盾」
+   *              这类只能从内容里读出来的关系。
+   *
+   * 这条区分是一次实测逼出来的:六类关系全部 matched = 0,
+   * 原因就是拿 textal 的标准去要求 structural 的关系。
+   */
+  evidencePolicy: "structural" | "textual";
   visual: { tone: string; dash?: string };
   /** 判定逻辑或提示词变更时必须自增 —— 证据链据此可追溯。 */
   promptVersion: string;

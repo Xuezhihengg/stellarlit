@@ -30,6 +30,7 @@ export const RelationPresetSchema = z.object({
       minSimilarity: z.number().min(0).max(1).optional(),
     })
     .default({}),
+  evidencePolicy: z.enum(["structural", "textual"]),
   visual: z.object({
     tone: z.string().max(40),
     dash: z.string().max(24).optional(),

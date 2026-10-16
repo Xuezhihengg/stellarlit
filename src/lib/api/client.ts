@@ -63,6 +63,26 @@ export async function fetchPresets(): Promise<RelationPreset[]> {
   return res.presets;
 }
 
+export interface LlmHealth {
+  ok: boolean;
+  model?: string;
+  latencyMs?: number;
+  answer?: string;
+  error?: string;
+  hint?: string;
+}
+
+/**
+ * 模型连通性自检。
+ *
+ * 刻意返回 200 + ok:false,而不是用 HTTP 错误码 ——
+ * 「密钥没配」是一种**正常的业务状态**,不是服务端故障,
+ * 界面据 ok 字段渲染即可,不必区分 catch 与 success 两条路径。
+ */
+export function testLlm(): Promise<LlmHealth> {
+  return request<LlmHealth>("/api/llm/health", { method: "POST" });
+}
+
 export function resolveSeed(query: string, knownPaperIds: string[] = []) {
   return request<ResolveSeedResponse>("/api/seed/resolve", {
     method: "POST",

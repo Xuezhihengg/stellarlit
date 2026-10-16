@@ -168,8 +168,17 @@ function drawEdges(
   ctx.save();
   ctx.lineCap = "round";
 
-  // 按 (色调, 是否高亮) 分桶:同一桶只设置一次 strokeStyle
-  const buckets = new Map<string, { tone: string; active: boolean; dash: number[] | null; segs: Array<[number, number, number, number]> }>();
+  // 按 (色调, 是否高亮, 层级) 分桶:同一桶只设置一次 strokeStyle
+  const buckets = new Map<
+    string,
+    {
+      tone: string;
+      active: boolean;
+      layer: "structural" | "semantic";
+      dash: number[] | null;
+      segs: Array<[number, number, number, number]>;
+    }
+  >();
 
   const margin = 80;
   for (const e of scene.edges) {
@@ -190,10 +199,11 @@ function drawEdges(
       continue;
     }
 
-    const key = `${e.tone}|${e.active ? 1 : 0}|${e.dash ? e.dash.join(",") : "solid"}`;
+    const layer = e.layer === "semantic" ? "semantic" : "structural";
+    const key = `${e.tone}|${e.active ? 1 : 0}|${layer}|${e.dash ? e.dash.join(",") : "solid"}`;
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { tone: e.tone, active: e.active, dash: e.dash, segs: [] };
+      bucket = { tone: e.tone, active: e.active, layer, dash: e.dash, segs: [] };
       buckets.set(key, bucket);
     }
     bucket.segs.push([pa.x, pa.y, pb.x, pb.y]);
@@ -203,10 +213,29 @@ function drawEdges(
     ctx.strokeStyle = toneOf(bucket.tone, p);
     ctx.setLineDash(bucket.dash ?? []);
 
-    // 高亮的边是画面里唯一允许「亮」的东西:其余压到几乎看不见
-    const base = bucket.active ? 0.6 : level === "paper" ? 0.16 : 0.2;
+    /**
+     * 两层线,两种角色。
+     *
+     * 引用边是**骨架**:它数量最多(动辄上千条),画清楚就够了,不能亮,
+     * 否则整张图糊成一张灰网,注意力无处安放。
+     * 语义边是**结论**:只有几条到几十条,是用户真正要读的东西,
+     * 必须从骨架里浮出来。所以同一层级下它比引用边亮三倍左右。
+     */
+    const semantic = bucket.layer === "semantic";
+    const base = bucket.active
+      ? semantic
+        ? 0.78
+        : 0.45
+      : semantic
+        ? level === "paper"
+          ? 0.46
+          : 0.4
+        : level === "paper"
+          ? 0.13
+          : 0.17;
+
     ctx.globalAlpha = base * alpha;
-    ctx.lineWidth = bucket.active ? 1.1 : 0.65;
+    ctx.lineWidth = bucket.active ? 1.2 : semantic ? 1 : 0.6;
 
     ctx.beginPath();
     for (const [x1, y1, x2, y2] of bucket.segs) {

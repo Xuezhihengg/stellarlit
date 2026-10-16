@@ -24,6 +24,42 @@ import { edgeKindOf } from "./presets";
 
 const now = (): string => new Date().toISOString();
 
+/**
+ * 并发判定的批大小。
+ *
+ * 判定之间互不依赖,但也不是越大越好:一次性打出去几十个请求,
+ * 供应商侧大概率触发限流,重试反而更慢。4 是在实测里既能压住墙钟时间、
+ * 又不会触发限流的档位。
+ */
+const JUDGE_CONCURRENCY = 4;
+
+/** 组装一条语义边。把构造逻辑收在一处,是因为它同时约束了三件事:层的归属、证据的不变式、溯源信息。 */
+function makeEdge(
+  preset: RelationPreset,
+  a: OaWork,
+  b: OaWork,
+  confidence: number,
+  evidence: Evidence[],
+  rationale: string,
+  provenance: Provenance,
+): GraphEdge {
+  const source = `paper:${a.id}`;
+  const target = `paper:${b.id}`;
+  return {
+    id: `${source}|${edgeKindOf(preset.id)}|${target}`,
+    kind: edgeKindOf(preset.id) as GraphEdge["kind"],
+    layer: "semantic",
+    source,
+    target,
+    directed: preset.directed,
+    weight: confidence,
+    confidence,
+    evidence,
+    rationale,
+    provenance,
+  };
+}
+
 export interface RelationReport {
   /** 每个预设:候选数 / 判定数 / 命中数 */
   perPreset: Record<
@@ -35,7 +71,7 @@ export interface RelationReport {
 }
 
 /** 判定过程中用到的、可由数据源直接算出的事实。 */
-interface PairFeatures {
+export interface PairFeatures {
   i: number;
   j: number;
   citesIJ: boolean;
@@ -96,7 +132,7 @@ function bigramDice(a: string, b: string): number {
  * 这里刻意**不做全量笛卡尔积**:候选只在「有引用关系」或「共享主题」的论文之间存在。
  * 一篇论文与它毫不相关的另一篇,不需要花任何算力去证明它们不相关。
  */
-function generatePairs(papers: OaWork[]): PairFeatures[] {
+export function generatePairs(papers: OaWork[]): PairFeatures[] {
   const index = new Map<string, number>();
   papers.forEach((w, i) => index.set(w.id, i));
 
@@ -169,7 +205,7 @@ function generatePairs(papers: OaWork[]): PairFeatures[] {
 }
 
 /** 硬约束:全部是确定性规则,不涉及模型。返回 false 表示这个候选连送审的资格都没有。 */
-function passesHardConstraints(f: PairFeatures, preset: RelationPreset): boolean {
+export function passesHardConstraints(f: PairFeatures, preset: RelationPreset): boolean {
   const c = preset.hardConstraints;
 
   if (c.maxYearGap !== undefined && f.yearGap > c.maxYearGap) return false;
@@ -192,7 +228,7 @@ function passesHardConstraints(f: PairFeatures, preset: RelationPreset): boolean
  * 它刻意做得很保守:只利用数据源里已有的事实(引用、年份、主题、标题),
  * 不给任何「读起来像」的判断。宁可少给几条,也不制造无法核验的结论。
  */
-function heuristicScore(f: PairFeatures, preset: RelationPreset): number {
+export function heuristicScore(f: PairFeatures, preset: RelationPreset): number {
   switch (preset.id) {
     case "baseline":
     case "extends": {
@@ -232,18 +268,87 @@ const JudgeSchema = z.object({
     .optional(),
 });
 
-const JUDGE_SYSTEM = `你是一名严谨的学术文献分析助手。你的任务是在两篇论文之间判定一种**指定的关系**。
-
-你必须遵守的规则:
-1. 只依据给定的标题与摘要判断,不得引入外部知识或推测论文里没写的内容。
-2. 提供的「反例」是判断边界,遇到反例描述的情况必须判为不成立。
-3. 如果证据不足,判 match = false。宁可漏判,不要误判。
-4. evidence 里必须是**原文中逐字出现的片段**,不能改写、不能概括。找不到原文片段就不要给。
+const COMMON_RULES = `通用规则:
+1. 提供的「反例」是判断边界,遇到反例描述的情况必须判为不成立。
+2. 拿不准就判 match = false。宁可漏判,不要误判。
+3. confidence 要如实反映你的把握程度,不要一律给高分。
 
 只输出 JSON,格式:
-{"match": true|false, "confidence": 0-1, "rationale": "一句话理由", "evidence": [{"paperId": "...", "quote": "..."}]}`;
+{"match": true|false, "confidence": 0-1, "rationale": "一到两句话说明理由", "evidence": [{"paperId": "...", "quote": "..."}]}`;
+
+/**
+ * 判定用的系统提示词,按证据标准分两套。
+ *
+ * 这个区分来自一次实测:六类关系全部 matched = 0。原因是我用同一套标准
+ * 要求了所有关系 —— 而「基线」「扩展」这类关系的判据是**引文结构与学术角色**,
+ * 摘要里通常不会写「我们以 X 作为基线」(那在正文的实验章节)。
+ * 要求逐字引用摘要,等于要求模型证明一件摘要里根本不存在的事,
+ * 于是它只能全部判 false。
+ *
+ * 分两套之后,规则与手头的数据终于对上了:
+ *   structural —— 允许使用领域常识判断学术角色,证据以引用记录与元数据为主
+ *   textual    —— 必须给出可核验的原文片段,那是判断内容关系的唯一可靠依据
+ */
+export function judgeSystem(policy: "structural" | "textual"): string {
+  if (policy === "textual") {
+    return `你是一名严谨的学术文献分析助手,任务是在两篇论文之间判定一种**内容层面的关系**。
+
+这类关系的判断只能从论文本身读出来,因此:
+1. 只依据给定的标题与摘要判断,不得引入摘要之外的信息。
+2. evidence 里必须是摘要中**逐字出现的片段**,不能改写、不能概括。
+3. 如果找不到能支撑判定的原文片段,必须判 match = false。
+
+${COMMON_RULES}`;
+  }
+
+  return `你是一名资深的研究者,任务是在两篇论文之间判定一种**学术角色关系**。
+
+这类关系的判据是研究者在领域中的实际位置,不是某句话字面写了什么:
+1. 允许使用你对该领域的常识判断角色(例如某篇是否为公认的基线方法)。
+2. 摘要里通常不会写明「我们以 X 作为基线」——那写在正文的实验章节,不要因为摘要没提就否定。
+3. 但也不能凭空拔高:如果两篇只是同领域、并没有实际的方法沿袭或对照关系,必须判 false。
+4. evidence 里能给出原文片段最好;给不出就留空,不要为了凑证据而编造。
+
+${COMMON_RULES}`;
+}
 
 /** 把证据片段核验回原文。模型编造的引用会在这里被拦下。 */
+
+/**
+ * 结构类关系的证据。
+ *
+ * 这类关系的判据本来就是引用与元数据,所以证据就用这些**可公开核验的事实**来写,
+ * 而不是硬塞一段原文。界面上会把它标成「结构化依据」,
+ * 与「原文片段」区分开 —— 两者的可信度不同,呈现方式也不该相同。
+ */
+function structuralEvidence(f: PairFeatures, a: OaWork, b: OaWork): Evidence {
+  const citer = f.citesIJ ? a : f.citesJI ? b : null;
+  const cited = f.citesIJ ? b : f.citesJI ? a : null;
+
+  if (citer && cited) {
+    return {
+      kind: "citation",
+      paperId: `paper:${citer.id}`,
+      cites: `paper:${cited.id}`,
+      note: `引用记录来自 OpenAlex;两篇发表年份相差 ${f.yearGap} 年`,
+    };
+  }
+
+  return {
+    kind: "metadata",
+    note: `依据引文结构与发表元数据判定:${
+      f.citesIJ || f.citesJI ? "存在引用关系" : "两者互不引用"
+    },年份差 ${f.yearGap} 年,共享主题 ${f.sharedTopics.length} 个`,
+    fields: {
+      yearGap: f.yearGap,
+      sharedTopics: f.sharedTopics.length,
+      topicOverlap: Number(f.topicOverlap.toFixed(3)),
+      aYear: a.year,
+      bYear: b.year,
+    },
+  };
+}
+
 function verifyQuotes(
   raw: Array<{ paperId: string; quote: string }>,
   byId: Map<string, OaWork>,
@@ -282,7 +387,7 @@ function verifyQuotes(
   return { evidence, rejected };
 }
 
-function pairPrompt(f: PairFeatures, a: OaWork, b: OaWork, preset: RelationPreset): string {
+export function pairPrompt(f: PairFeatures, a: OaWork, b: OaWork, preset: RelationPreset): string {
   const relation = f.citesIJ
     ? `${a.id} 引用了 ${b.id}`
     : f.citesJI
@@ -329,6 +434,14 @@ export interface RelationPipelineOptions {
   presets: RelationPreset[];
   /** 每个预设最多送审多少对候选 */
   candidateLimit?: number;
+  /**
+   * 每个预设施加给模型的**硬上限**。
+   *
+   * 没有它的时候:6 个预设 × 40 个候选 = 240 次模型调用,一次建图就会
+   * 烧掉可观的额度,用户还要等好几分钟。有价值的候选永远排在最前面
+   * (排序用的就是启发式分),所以砍掉尾巴的损失远小于成本收益。
+   */
+  maxJudgedPerPreset?: number;
   /** 每篇种子论文最多保留多少条该关系的边 */
   perSeedLimit?: number;
   seedOaIds?: string[];
@@ -339,7 +452,7 @@ export async function buildSemanticEdges(
   papers: OaWork[],
   opts: RelationPipelineOptions,
 ): Promise<{ edges: GraphEdge[]; report: RelationReport }> {
-  const { presets, candidateLimit = 40, seedOaIds = [] } = opts;
+  const { presets, candidateLimit = 40, maxJudgedPerPreset = 12, seedOaIds = [] } = opts;
   const byId = new Map(papers.map((w) => [w.id, w]));
   const pairs = generatePairs(papers);
   const useLlm = llmAvailable();
@@ -351,60 +464,146 @@ export async function buildSemanticEdges(
   for (const preset of presets) {
     if (!preset.enabled) continue;
 
-    const mode: "llm" | "heuristic" = useLlm && preset.id !== "contradicts" ? "llm" : "heuristic";
+    /**
+     * 有模型就全部交给模型。
+     *
+     * 这里一度把「结论矛盾」排除在模型判定之外 —— 理由是它的启发式打分恒为 0。
+     * 但那正好把因果搞反了:矛盾关系恰恰是**唯一必须读摘要才能判断**的关系,
+     * 元数据里根本没有它的信号。排除它的结果就是这一类边永远为空。
+     */
+    const mode: "llm" | "heuristic" = useLlm ? "llm" : "heuristic";
     report.perPreset[preset.id] = { candidates: 0, judged: 0, matched: 0, mode };
 
     const eligible = pairs.filter((f) => passesHardConstraints(f, preset));
     report.perPreset[preset.id]!.candidates = eligible.length;
 
-    const ranked = eligible
+    /**
+     * 先筛「必须涉及种子」,再按分数排序取前 N —— 顺序不能反。
+     *
+     * 反过来的后果很隐蔽:高分候选往往是两篇高被引论文之间的强关系,
+     * 它们跟种子无关,于是**占满了前 40 个名额**,真正需要判定的种子邻域
+     * 一个都没进去。实测表现就是 judged 恒为 0、界面上一条语义边都没有,
+     * 而候选总数看起来完全正常。
+     */
+    const seedRelated = eligible.filter((f) => {
+      if (seedOaIds.length === 0) return true;
+      const a = papers[f.i];
+      const b = papers[f.j];
+      return Boolean(a && b && (seedOaIds.includes(a.id) || seedOaIds.includes(b.id)));
+    });
+
+    const ranked = seedRelated
       .map((f) => ({ f, s: heuristicScore(f, preset) }))
       .sort((x, y) => y.s - x.s)
       .slice(0, candidateLimit);
 
-    for (const { f, s } of ranked) {
-      const a = papers[f.i];
-      const b = papers[f.j];
-      if (!a || !b) continue;
+    let judgedCount = 0;
+    let matchedTotal = 0;
+    const batchSize = mode === "llm" ? JUDGE_CONCURRENCY : 16;
 
-      // 每篇种子论文的配额:防止一个高产预设淹没整张图
-      const touchesSeed =
-        seedOaIds.length === 0 || seedOaIds.includes(a.id) || seedOaIds.includes(b.id);
-      if (!touchesSeed) continue;
-      const key = seedOaIds.includes(b.id) ? b.id : a.id;
-      if ((perSeedCount.get(`${preset.id}:${key}`) ?? 0) >= preset.maxPerSeed) continue;
+    for (let start = 0; start < ranked.length; start += batchSize) {
+      // 已经攒够这类关系要显示的条数,再问模型就是浪费
+      if (matchedTotal >= preset.maxPerSeed) break;
+      // 硬上限:防止一个高产预设把额度吃光
+      if (mode === "llm" && judgedCount >= maxJudgedPerPreset) break;
 
-      let matched = false;
-      let confidence = s;
-      let rationale =
-        mode === "heuristic"
-          ? `启发式判定(未配置大模型):依据引用关系、年份差与主题重叠度。检测到 ${f.sharedTopics.length} 个共享主题。`
-          : "";
-      let evidence: Evidence[] = [];
+      const budget = mode === "llm" ? maxJudgedPerPreset - judgedCount : batchSize;
+      const batch = ranked.slice(start, start + Math.min(batchSize, budget));
 
-      if (mode === "llm") {
-        const judged = await chatJson(
-          {
-            system: JUDGE_SYSTEM,
-            user: pairPrompt(f, a, b, preset),
-            temperature: 0.05,
-            maxTokens: 900,
-          },
-          JudgeSchema,
-        );
-        report.perPreset[preset.id]!.judged++;
-        if (!judged) continue;
+      /**
+       * 同一批里并发判定。
+       *
+       * 串行等待每一次模型往返会把建图时间拉到一分钟以上(实测 80 秒),
+       * 演示时不可接受。判定彼此独立,天然可以并发 ——
+       * 只在批次之间检查「攒够没有」,既保住了提前退出,又把墙钟时间压到四分之一。
+       */
+      const outcomes = await Promise.all(
+        batch.map(async ({ f, s }) => {
+          let a = papers[f.i];
+          let b = papers[f.j];
+          if (!a || !b) return null;
 
-        matched = judged.value.match;
-        confidence = judged.value.confidence ?? 0.7;
-        rationale = judged.value.rationale ?? "";
-        const verified = verifyQuotes(judged.value.evidence ?? [], byId);
-        report.rejectedQuotes += verified.rejected;
-        evidence = verified.evidence;
-      } else {
-        matched = preset.id === "contradicts" ? false : s >= 0.55;
-        // 启发式判定没有原文证据,但必须留下「依据什么算出来的」的结构化事实
-        if (matched) {
+          /**
+           * 有向关系的**方向必须按引用来定,不能按下标定**。
+           *
+           * 候选对是按节点下标 (i < j) 生成的,下标顺序与时间顺序无关。
+           * 「基线」的定义是「A 是 B 的基线」,如果 A/B 顺序随机,
+           * 一半的候选就是反的 —— 一个严谨的模型会如实判为不成立。
+           * 实测表现就是候选有几百条、judged 也有十几条,但 matched 恒为 0。
+           *
+           * 规则:i 引用了 j,说明 j 更早、是被当作基础的那一方,
+           * 于是把 j 放成 A、i 放成 B。
+           */
+          if (preset.directed && f.citesIJ) {
+            const t = a;
+            a = b;
+            b = t;
+          }
+
+          let matched = false;
+          let confidence = s;
+          let rationale =
+            mode === "heuristic"
+              ? `启发式判定(未配置大模型):依据引用关系、年份差与主题重叠度。检测到 ${f.sharedTopics.length} 个共享主题。`
+              : "";
+          let evidence: Evidence[] = [];
+
+          if (mode === "llm") {
+            const judged = await chatJson(
+              {
+                system: judgeSystem(preset.evidencePolicy),
+                user: pairPrompt(f, a, b, preset),
+                temperature: 0.05,
+                maxTokens: 900,
+              },
+              JudgeSchema,
+            );
+            if (!judged) return { judged: true, a, b, edge: null, rejected: 0 };
+
+            matched = judged.value.match;
+            confidence = judged.value.confidence ?? 0.7;
+            rationale = judged.value.rationale ?? "";
+            const verified = verifyQuotes(judged.value.evidence ?? [], byId);
+            evidence = verified.evidence;
+
+            /**
+             * 证据标准的两条出口。
+             *
+             * structural 关系(基线/扩展/同期)的判据是引文结构与学术角色,
+             * 拿不到原文片段是正常的 —— 用可核验的结构事实作为证据,并如实标注来源。
+             * textual 关系(思路类似/同任务异方法/结论矛盾)拿不到原文片段就必须丢弃:
+             * 那类判断一旦没有原文支撑,和让模型自由发挥没有区别。
+             */
+            if (matched && evidence.length === 0) {
+              if (preset.evidencePolicy === "textual") {
+                matched = false;
+              } else {
+                evidence = [structuralEvidence(f, a, b)];
+              }
+            }
+
+            if (!matched || evidence.length === 0) {
+              return { judged: true, a, b, edge: null, rejected: verified.rejected };
+            }
+
+            return {
+              judged: true,
+              a,
+              b,
+              rejected: verified.rejected,
+              edge: makeEdge(preset, a, b, confidence, evidence, rationale, {
+                source: "llm",
+                ref: `${a.id}->${b.id}`,
+                promptVersion: preset.promptVersion,
+                at: now(),
+              }),
+            };
+          }
+
+          matched = preset.id === "contradicts" ? false : s >= 0.55;
+          // 启发式判定没有原文证据,但必须留下「依据什么算出来的」的结构化事实
+          if (!matched) return { judged: false, a, b, edge: null, rejected: 0 };
+
           evidence = [
             {
               kind: "metadata",
@@ -416,42 +615,39 @@ export async function buildSemanticEdges(
               },
             },
           ];
-        }
-      }
 
-      if (!matched) continue;
-
-      // 不变式:语义边必须有证据。没有证据的判定不入库。
-      if (evidence.length === 0) continue;
-
-      const sourceId = `paper:${a.id}`;
-      const targetId = `paper:${b.id}`;
-      const provenance: Provenance =
-        mode === "llm"
-          ? {
-              source: "llm",
-              ref: `${a.id}->${b.id}`,
-              promptVersion: preset.promptVersion,
+          return {
+            judged: false,
+            a,
+            b,
+            rejected: 0,
+            edge: makeEdge(preset, a, b, confidence, evidence, rationale, {
+              source: "algorithm",
+              ref: `heuristic:${preset.id}`,
               at: now(),
-            }
-          : { source: "algorithm", ref: `heuristic:${preset.id}`, at: now() };
+            }),
+          };
+        }),
+      );
 
-      edges.push({
-        id: `${sourceId}|${edgeKindOf(preset.id)}|${targetId}`,
-        kind: edgeKindOf(preset.id) as GraphEdge["kind"],
-        layer: "semantic",
-        source: sourceId,
-        target: targetId,
-        directed: preset.directed,
-        weight: confidence,
-        confidence,
-        evidence,
-        rationale,
-        provenance,
-      });
+      for (const outcome of outcomes) {
+        if (!outcome) continue;
+        if (outcome.judged) {
+          judgedCount++;
+          report.perPreset[preset.id]!.judged++;
+        }
+        report.rejectedQuotes += outcome.rejected;
+        if (!outcome.edge) continue;
 
-      perSeedCount.set(`${preset.id}:${key}`, (perSeedCount.get(`${preset.id}:${key}`) ?? 0) + 1);
-      report.perPreset[preset.id]!.matched++;
+        // 每篇种子论文的配额:防止一个高产预设淹没整张图
+        const key = seedOaIds.includes(outcome.b.id) ? outcome.b.id : outcome.a.id;
+        if ((perSeedCount.get(`${preset.id}:${key}`) ?? 0) >= preset.maxPerSeed) continue;
+
+        edges.push(outcome.edge);
+        perSeedCount.set(`${preset.id}:${key}`, (perSeedCount.get(`${preset.id}:${key}`) ?? 0) + 1);
+        report.perPreset[preset.id]!.matched++;
+        matchedTotal++;
+      }
     }
   }
 

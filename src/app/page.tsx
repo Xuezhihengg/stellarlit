@@ -3,13 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { AssistantRail } from "@/components/shell/AssistantRail";
+import { AccountMenu } from "@/components/shell/AccountMenu";
 import { BottomBar } from "@/components/shell/BottomBar";
 import { BrandMark } from "@/components/shell/BrandMark";
 import { RelationLegend } from "@/components/shell/RelationLegend";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { TopBar } from "@/components/shell/TopBar";
 import { Metric } from "@/components/ui/Metric";
-import { NavLinks } from "@/components/shell/NavLinks";
 import { StarfieldCanvas } from "@/components/star-map/StarfieldCanvas";
 import { StarMap } from "@/components/star-map/StarMap";
 import { useTheme } from "@/hooks/use-theme";
@@ -115,8 +115,8 @@ export default function StarfieldPage() {
                 <Metric label="FRONTIERS" value={payload.graph.stats.communities} />
               </div>
             ) : null}
-            <NavLinks />
             <ThemeToggle theme={theme} onToggle={toggleTheme} />
+            <AccountMenu />
           </>
         }
         rightInset={collapsed ? 0 : RAIL_WIDTH}

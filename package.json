@@ -10,6 +10,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check:tokens": "tsx scripts/check-tokens.ts",
+    "probe": "tsx --env-file=.env.local scripts/relation-probe.mts",
     "check": "pnpm typecheck && pnpm lint && pnpm check:tokens"
   },
   "dependencies": {

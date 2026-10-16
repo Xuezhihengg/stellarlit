@@ -115,22 +115,32 @@ body::before {
   transition: opacity var(--dur-slow) var(--ease-out);
 }
 
-button {
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-}
+/* ===========================================================================
+   基础重置 —— 必须放在 base 层里
 
-input,
-textarea {
-  font: inherit;
-  color: inherit;
-  background: none;
-  border: none;
-  outline: none;
+   踩过的坑:这些规则原来写在图层之外(裸的元素选择器)。
+   在 CSS 级联里,**没有图层的样式优先级高于任何图层**,与选择器权重无关 ——
+   而 Tailwind v4 把工具类放在 `utilities` 层。结果 `button { border: none }`
+   压过了所有按钮上的 `border-hair-2`,`button { background: none }`
+   压过了所有 `bg-*`。
+
+   表现极具迷惑性:幽灵按钮的边框全部消失、开关只剩一个圆点没有轨道,
+   而布局和颜色看起来都"差不多对",所以很容易被当成设计选择而不是 bug。
+   放进 base 层后,工具类回到了它该在的位置。
+   =========================================================================== */
+@layer base {
+  button {
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+    outline: none;
+  }
 }
 
 ::selection {

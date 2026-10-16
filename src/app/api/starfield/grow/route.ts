@@ -18,6 +18,8 @@ const Body = z.object({
   seedPaperId: z.string().min(3).max(120),
   name: z.string().max(160).optional(),
   budget: z.number().int().min(40).max(600).optional(),
+  pool: z.number().int().min(6).max(200).optional(),
+  judgeDepth: z.number().int().min(4).max(40).optional(),
   presets: z.array(RelationPresetSchema).max(24).optional(),
 });
 

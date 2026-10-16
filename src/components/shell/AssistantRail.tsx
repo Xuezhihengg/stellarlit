@@ -143,11 +143,29 @@ export function AssistantRail({
 
       {payload ? (
         <footer className="border-t border-hair px-5 py-3">
-          <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[10px] text-ink-4">
-            <span>{payload.graph.stats.papers} 篇</span>
-            <span>{payload.graph.stats.edges} 条边</span>
-            <span>{payload.meta.relations.rejectedQuotes} 条引用被核验拦下</span>
-            <span>{(payload.meta.durationMs / 1000).toFixed(1)}s 构建</span>
+          <div className="flex flex-col gap-1.5 font-mono text-[10px] text-ink-4">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span>{payload.graph.stats.papers} 篇</span>
+              <span>{payload.graph.stats.edges} 条边</span>
+              <span>{(payload.meta.durationMs / 1000).toFixed(1)}s</span>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span>
+                {payload.meta.capabilities.llm
+                  ? `模型调用 ${payload.meta.relations.llmCalls} 次 · 约 ${(
+                      payload.meta.relations.estimatedTokens / 1000
+                    ).toFixed(1)}k token`
+                  : "未使用模型"}
+              </span>
+              {payload.meta.relations.cacheHits > 0 ? (
+                <span className="text-accent/70">
+                  命中缓存 {payload.meta.relations.cacheHits} 对
+                </span>
+              ) : null}
+              {payload.meta.relations.rejectedQuotes > 0 ? (
+                <span>{payload.meta.relations.rejectedQuotes} 条引用被核验拦下</span>
+              ) : null}
+            </div>
           </div>
         </footer>
       ) : null}

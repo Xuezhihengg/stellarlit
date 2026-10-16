@@ -290,7 +290,9 @@ function drawNodes(
       if (n.dimmed) continue;
       const c = worldToScreen(camera, width, height, n);
       if (c.x < -20 || c.x > width + 20 || c.y < -20 || c.y > height + 20) continue;
-      const r = Math.max(0.7, n.r * camera.scale * bucket.radius);
+      // 上限 9px:图很小时相机会推得很近,不封顶的话星体会涨成一个个圆盘,
+      // 既不像"星",也会把连线端点盖住
+      const r = Math.max(0.7, Math.min(9, n.r * camera.scale * bucket.radius));
       ctx.moveTo(c.x + r, c.y);
       ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
     }

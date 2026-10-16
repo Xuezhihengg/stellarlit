@@ -29,6 +29,10 @@ export interface RelationReportDto {
   >;
   /** 被引用核验拦下的、模型编造的原文片段数 */
   rejectedQuotes: number;
+  llmCalls: number;
+  estimatedTokens: number;
+  cacheHits: number;
+  batchFallbacks: number;
 }
 
 export interface BuildMeta {
@@ -73,6 +77,10 @@ export interface GrowRequest {
   name?: string;
   /** 单次构建的论文预算上限 */
   budget?: number;
+  /** 候选池宽度:每个种子向后 / 向前各抓多少篇,不影响入图数量 */
+  pool?: number;
+  /** 每类关系送审多少对候选 —— 直接决定模型成本与语义图的稠密程度 */
+  judgeDepth?: number;
   /**
    * 关系预设覆盖。
    *

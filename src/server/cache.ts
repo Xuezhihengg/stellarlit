@@ -19,7 +19,7 @@ import { serverConfig } from "./config";
  * 旧缓存被当新格式读出来,界面上出现一整片 `undefined` 的节点。
  * 带版本号比「记得手工删缓存」可靠得多。
  */
-export const CACHE_FORMAT = "v1";
+export const CACHE_FORMAT = "v2";
 
 const CACHE_DIR = path.join(serverConfig.dataDir, "cache");
 

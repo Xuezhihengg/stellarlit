@@ -77,7 +77,13 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
       "只是都用了同一个数据集,不算。",
     directed: false,
     hardConstraints: {
-      minSimilarity: 0.35,
+      /**
+       * 走 TF-IDF 余弦。这类指标的绝对值天然偏低:两篇摘要即使讲同一件事,
+       * 因为用词、句式不同,余弦通常也只在 0.2~0.4 之间。
+       * 阈值定在 0.35 时实测把整类关系筛成了空集 —— 阈值要贴着指标的尺度定,
+       * 而不是照着"感觉上应该像"的直觉定。
+       */
+      minSimilarity: 0.2,
     },
     evidencePolicy: "textual",
     visual: { tone: "var(--accent)", dash: "none" },

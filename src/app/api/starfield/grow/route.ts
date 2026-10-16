@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { ApiError, GrowResponse } from "@/types/api";
 
+import { UpstreamError } from "@/server/http";
 import { growStarfield } from "@/server/starfield/grow";
 import { RelationPresetSchema } from "@/server/relations/schema";
 
@@ -44,6 +45,29 @@ export async function POST(req: Request): Promise<NextResponse<GrowResponse | Ap
     return NextResponse.json(payload);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
+
+    /**
+     * 配额用尽要单独说清楚。
+     *
+     * 它和"网络不通"是两回事:后者等一会儿再试就好,前者要等十几个小时
+     * 或者换一个数据源配额。混在一句"暂时不可用"里,用户会一直刷新重试,
+     * 而每一次重试都在继续消耗已经很紧张的额度。
+     */
+    const quota = e instanceof UpstreamError ? e.quota : undefined;
+    if (quota) {
+      const hours = Math.max(0.1, quota.resetAfterSec / 3600);
+      return NextResponse.json(
+        {
+          error: "OpenAlex 的每日请求额度已用完",
+          hint: `免费额度是每天 1000 次请求,约 ${hours.toFixed(1)} 小时后重置(约 ${new Date(
+            Date.now() + quota.resetAfterSec * 1000,
+          ).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })} 可用)。已构建过的星空不受影响,可以照常打开。`,
+          code: "quota",
+        },
+        { status: 503 },
+      );
+    }
+
     // 上游不可用与内部错误要分开:前者用户等待重试有意义,后者没有
     const isUpstream = /请求失败|HTTP \d|upstream/i.test(message);
     return NextResponse.json(

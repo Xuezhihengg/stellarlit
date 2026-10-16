@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { ApiError, GrowRequest } from "@/types/api";
 
+import { UpstreamError } from "@/server/http";
 import { growStarfieldStream } from "@/server/starfield/grow";
 import { RelationPresetSchema } from "@/server/relations/schema";
 
@@ -61,10 +62,12 @@ export async function POST(req: Request): Promise<Response> {
         }
       } catch (e) {
         const message = e instanceof Error ? e.message : String(e);
+        // 配额用尽要单独说清楚:它不是"等一下再试",而是"十几个小时后才有"
+        const quota = e instanceof UpstreamError ? e.quota : undefined;
         send({
           type: "error",
-          message: /请求失败|HTTP \\d/i.test(message)
-            ? "文献数据源暂时不可用,请稍后重试"
+          message: quota
+            ? `OpenAlex 的每日请求额度已用完,约 ${Math.max(0.1, quota.resetAfterSec / 3600).toFixed(1)} 小时后重置。已构建过的星空不受影响。`
             : message,
         });
       } finally {

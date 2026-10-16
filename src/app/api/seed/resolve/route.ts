@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import type { ApiError, ResolveSeedResponse } from "@/types/api";
 
+import { UpstreamError } from "@/server/http";
 import { resolveSeed } from "@/server/seed/resolve";
 
 export const dynamic = "force-dynamic";
@@ -43,6 +44,17 @@ export async function POST(req: Request): Promise<NextResponse<ResolveSeedRespon
     }
     return NextResponse.json({ candidates });
   } catch (e) {
+    const quota = e instanceof UpstreamError ? e.quota : undefined;
+    if (quota) {
+      return NextResponse.json(
+        {
+          error: "OpenAlex 的每日请求额度已用完",
+          hint: `免费额度是每天 1000 次请求,约 ${Math.max(0.1, quota.resetAfterSec / 3600).toFixed(1)} 小时后重置。已构建过的星空不受影响。`,
+          code: "quota",
+        },
+        { status: 503 },
+      );
+    }
     return NextResponse.json(
       {
         error: "文献数据源暂时不可用",

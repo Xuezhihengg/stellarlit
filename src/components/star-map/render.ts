@@ -752,8 +752,13 @@ function drawLabels(
     const important = scene.nodes
       .filter((n) => !n.dimmed && n.citations > 0)
       .sort((x, y) => {
-        // 种子与选中项永远优先,其余按被引量
-        const rank = (n: typeof x) => (n.seed ? 1e9 : 0) + (n.selected || n.hovered ? 5e8 : 0) + n.citations;
+        // 种子与焦点项永远优先,其余按被引量。
+        // 这里用 focusId 而不是 selected:退场过程中那颗星已经不是 selected 了,
+        // 但它的标签还得留在名单里把动画播完。
+        const rank = (n: typeof x) =>
+          (n.seed ? 1e9 : 0) +
+          (n.id === anim.focusId || n.hovered ? 5e8 : 0) +
+          n.citations;
         return rank(y) - rank(x);
       })
       .slice(0, LABEL_LIMIT.paper);
@@ -771,23 +776,23 @@ function drawLabels(
       const text = truncate(n.label, isKey ? 52 : 30);
       const r = Math.max(2.5, n.r * camera.scale);
       /**
-       * 选中项的标题就是普通标签本身,只是多一个缩放。
+       * 选中 = 在**常态之上的增量**,不是从零开始的另一套状态。
        *
-       * 之前另起一段专门画它,结果是同一个标题有两套样式(字重、字号、
-       * 位置都对不上邻居),看起来像贴上去的。现在只有一条绘制路径:
-       * 选中时把字号乘一个由 focus 驱动的系数,其它一律不变。
+       * 上一版把透明度乘了 focus,于是取消选中时它会一路淡到 0,
+       * 等 focus 归零、焦点释放之后又跳回常态亮度 —— 用户看到的就是
+       * "先完全消失,再冒出一个完整标题"。字号同理:终点定在 0.82 而
+       * 常态是 1,收尾那一帧也会跳一下。
        *
-       * 系数从 0.82 涨到 1.14:起始比常态略小、终态略大,
-       * 于是"放大"这个动作看得出来,又不至于把版面撑乱。
+       * 现在的两个量都以 1 为基准做加法:f=0 时完全等于常态,
+       * f=1 时才是放大后的样子。整条曲线单调、连续,两端都不跳。
        */
-      const ease = focus > 0 ? 1 - (1 - focus) * (1 - focus) : 0;
-      const scaleIn = focus > 0 ? 0.82 + 0.32 * ease : 1;
+      const ease = 1 - (1 - focus) * (1 - focus);
+      const scaleIn = 1 + 0.16 * ease;
       const base = isKey ? 12 : 10.5;
 
       ctx.font = `${(base * scaleIn).toFixed(1)}px ${SANS}`;
-      ctx.globalAlpha =
-        (isKey ? 0.95 : 0.55) * a.paperLabel * (focus > 0 ? Math.min(1, focus * 1.6) : 1);
-      ctx.fillStyle = focus > 0 ? p.ink : isKey ? p.ink2 : p.ink2;
+      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel * (1 + 0.35 * ease);
+      ctx.fillStyle = focus > 0.01 ? p.ink : p.ink2;
 
       // 标签压在星体上会互相干扰,统一挪到星体下方
       ctx.fillText(text, c.x, c.y + r + 13);

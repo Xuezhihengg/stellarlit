@@ -750,7 +750,7 @@ function drawLabels(
   // ---------- 论文标签:只在推近时出现,且只标最重要的那些 ----------
   if (a.paperLabel > 0.02 && level === "paper") {
     const important = scene.nodes
-      .filter((n) => !n.dimmed && n.citations > 0 && n.id !== anim.focusId)
+      .filter((n) => !n.dimmed && n.citations > 0)
       .sort((x, y) => {
         // 种子与选中项永远优先,其余按被引量
         const rank = (n: typeof x) => (n.seed ? 1e9 : 0) + (n.selected || n.hovered ? 5e8 : 0) + n.citations;
@@ -766,50 +766,31 @@ function drawLabels(
       const c = { x, y };
       if (c.x < 60 || c.x > width - 60 || c.y < 40 || c.y > height - 40) continue;
 
-      const isKey = n.seed || n.selected || n.hovered;
+      const focus = n.id === anim.focusId ? anim.focus : 0;
+      const isKey = n.seed || n.hovered || focus > 0.01;
       const text = truncate(n.label, isKey ? 52 : 30);
       const r = Math.max(2.5, n.r * camera.scale);
-      ctx.font = `${isKey ? 12 : 10.5}px ${SANS}`;
-      ctx.globalAlpha = (isKey ? 0.95 : 0.55) * a.paperLabel;
-      ctx.fillStyle = p.ink2;
+      /**
+       * 选中项的标题就是普通标签本身,只是多一个缩放。
+       *
+       * 之前另起一段专门画它,结果是同一个标题有两套样式(字重、字号、
+       * 位置都对不上邻居),看起来像贴上去的。现在只有一条绘制路径:
+       * 选中时把字号乘一个由 focus 驱动的系数,其它一律不变。
+       *
+       * 系数从 0.82 涨到 1.14:起始比常态略小、终态略大,
+       * 于是"放大"这个动作看得出来,又不至于把版面撑乱。
+       */
+      const ease = focus > 0 ? 1 - (1 - focus) * (1 - focus) : 0;
+      const scaleIn = focus > 0 ? 0.82 + 0.32 * ease : 1;
+      const base = isKey ? 12 : 10.5;
+
+      ctx.font = `${(base * scaleIn).toFixed(1)}px ${SANS}`;
+      ctx.globalAlpha =
+        (isKey ? 0.95 : 0.55) * a.paperLabel * (focus > 0 ? Math.min(1, focus * 1.6) : 1);
+      ctx.fillStyle = focus > 0 ? p.ink : isKey ? p.ink2 : p.ink2;
 
       // 标签压在星体上会互相干扰,统一挪到星体下方
       ctx.fillText(text, c.x, c.y + r + 13);
-    }
-  }
-
-  /**
-   * 选中星体的标题 —— **单独画,任何缩放层级都出现**。
-   *
-   * 这里原来有个实打实的缺陷:标题画在"论文层"的分支里,
-   * 而默认视角落在"前沿层",于是点开一颗星后能看到光晕和环、
-   * 却看不到它的标题 —— 用户反馈的"标题没有动效"其实是"标题压根没画"。
-   *
-   * 而且选中是**用户主动做的动作**,它的反馈不该受当前缩放层级限制:
-   * 你点了一颗星,就应该看到它的名字。普通论文的标签随层级浮动是对的,
-   * 但是选中项必须始终在场。
-   */
-  if (anim.focusId && anim.focus > 0.02) {
-    const idx = scene.nodes.findIndex((n) => n.id === anim.focusId);
-    const node = idx >= 0 ? scene.nodes[idx] : undefined;
-    const x = idx >= 0 ? fx[idx] : undefined;
-    const y = idx >= 0 ? fy[idx] : undefined;
-
-    if (node && x !== undefined && y !== undefined) {
-      const ease = 1 - (1 - anim.focus) * (1 - anim.focus);
-      // 缩放动效:从 0.8 涨到 1 —— 比改字号更像"浮现",而不是"字变大了"
-      const scaleIn = 0.8 + 0.2 * ease;
-      const r = Math.max(2.5, Math.min(9, node.r));
-      const text = truncate(node.label, 60);
-
-      ctx.globalAlpha = Math.min(1, anim.focus * 1.4) * a.paperLabel * 0.98;
-      ctx.font = `500 ${(15 * scaleIn).toFixed(1)}px ${SANS}`;
-      ctx.fillStyle = p.ink;
-      ctx.strokeStyle = hexA(p.bg, 0.7);
-      ctx.lineWidth = 3;
-      ctx.strokeText(text, x, y + r + 16 * scaleIn);
-      ctx.fillText(text, x, y + r + 16 * scaleIn);
-      ctx.globalAlpha = 1;
     }
   }
 

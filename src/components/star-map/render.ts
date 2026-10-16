@@ -883,9 +883,15 @@ function drawLabels(
        * 起点正好是常规状态,终点才是重点态。
        */
       const keyLevel = n.seed ? 1 : n.hovered ? 1 : 1 - (1 - focus) * (1 - focus);
-      const isKey = keyLevel > 0.5;
-      const text = truncate(n.label, isKey ? 52 : 30);
-      const r = Math.max(2.5, n.r * camera.scale);
+
+      /**
+       * 文字本身是不可插值的:截断长度一变,渲染出来的字符串就整个换掉,
+       * 那一帧必然是跳的 —— 字号可以连续过渡,字符串不行。
+       *
+       * 所以这一项用**交叉淡入**:短版与长版同时画,透明度互补。
+       * 两版的公共前缀完全一致,叠在一起看起来就是文字从末尾"长出来",
+       * 而不是换了一段字。
+       */
       /**
        * 字号与透明度都由 keyLevel 连续插值:
        *   keyLevel = 0 → 10.5px / 0.40  (常规标签,与选中无关时一模一样)
@@ -895,15 +901,27 @@ function drawLabels(
        * 颜色统一用 p.ink,靠透明度表达明暗 —— 之前按阈值在 ink2/ink 之间
        * 切换,那个切换本身也是一次跳变。
        */
+      const r = Math.max(2.5, n.r * camera.scale);
       const scaleIn = 1 + 0.16 * (1 - (1 - focus) * (1 - focus));
       const fontPx = (10.5 + 1.5 * keyLevel) * scaleIn;
 
       ctx.font = `${fontPx.toFixed(1)}px ${SANS}`;
-      ctx.globalAlpha = (0.4 + 0.55 * keyLevel) * a.paperLabel;
       ctx.fillStyle = p.ink;
 
+      const shortText = truncate(n.label, 30);
+      const longText = truncate(n.label, 52);
+      const alphaBase = (0.4 + 0.55 * keyLevel) * a.paperLabel;
       // 标签压在星体上会互相干扰,统一挪到星体下方
-      ctx.fillText(text, c.x, c.y + r + 13);
+      const labelY = c.y + r + 13;
+
+      if (keyLevel < 0.99 && shortText !== longText) {
+        ctx.globalAlpha = alphaBase * (1 - keyLevel);
+        ctx.fillText(shortText, c.x, labelY);
+      }
+      if (keyLevel > 0.01) {
+        ctx.globalAlpha = alphaBase * keyLevel;
+        ctx.fillText(longText, c.x, labelY);
+      }
     }
   }
 

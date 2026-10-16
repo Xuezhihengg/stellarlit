@@ -674,12 +674,7 @@ function drawCitationParticles(
    * kind 变成语义类型,引用那条被"吃掉"了 —— 用 kind 筛会把它们全漏掉。
    * 那些边是亮着的,所以它们的引用方向理应看得见。
    */
-  const links = scene.edges.filter(
-    (e) =>
-      e.hasCitation &&
-      !e.faded &&
-      (e.a === focusIndex || e.b === focusIndex),
-  );
+  const links = scene.edges.filter((e) => e.hasCitation && !e.faded);
   if (!links.length) return;
 
   ctx.save();
@@ -709,8 +704,10 @@ function drawCitationParticles(
     const cx = (ax + bx) / 2 + (-dy / Math.max(1, len)) * bow;
     const cy = (ay + by) / 2 + (dx / Math.max(1, len)) * bow;
 
-    // 方向:贝塞尔是按 a→b 参数化的,若引用方向是 b→a 就把参数反过来
-    const forward = e.from === e.a;
+    // 方向只由**引用**决定;语义边自己的方向与它无关
+    const citeFrom = e.citationFrom ?? e.from;
+    // 贝塞尔是按 a→b 参数化的,引用方向若是 b→a 就把参数反过来
+    const forward = citeFrom === e.a;
     // 长边跑得快一点,视觉速度才一致
     const speed = 0.34 / Math.max(0.4, Math.min(2.2, len / 220));
     const phase = seed;
@@ -719,8 +716,9 @@ function drawCitationParticles(
     const edgeFade = anim.edgeAlpha.get(e.id) ?? 1;
     if (edgeFade < 0.05) continue;
 
-    for (let k = 0; k < 2; k++) {
-      const raw = (time * speed + phase + k * 0.5) % 1;
+    // 一条边同时只有一个粒子:方向是"点"的信息,不需要一串
+    {
+      const raw = (time * speed + phase) % 1;
       const u = forward ? raw : 1 - raw;
       const iu = 1 - u;
       const px = iu * iu * ax + 2 * iu * u * cx + u * u * bx;

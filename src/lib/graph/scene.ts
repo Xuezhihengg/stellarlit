@@ -133,6 +133,15 @@ export interface SceneEdge {
    * 所以方向信息要单独留一个标志,不能靠 kind 反推。
    */
   hasCitation: boolean;
+  /**
+   * **引用**的方向,与 `from`/`to` 分开存。
+   *
+   * `from`/`to` 描述的是这条边作为整体时的方向(合并时可能取自语义那条),
+   * 而粒子的存在理由与方向都只由引用决定 —— 语义关系是"基线"还是"扩展",
+   * 跟这两篇谁引用了谁是两件事。混用一个字段,画面上就会指向相反的方向。
+   */
+  citationFrom: number | null;
+  citationTo: number | null;
 }
 
 export interface SceneBlob {
@@ -462,6 +471,8 @@ export function buildScene(
       label: layer === "semantic" ? (EDGE_LABEL[e.kind] ?? e.kind) : "",
       kinds: [EDGE_LABEL[e.kind] ?? e.kind],
       hasCitation: e.kind === "CITES",
+      citationFrom: e.kind === "CITES" ? a : null,
+      citationTo: e.kind === "CITES" ? b : null,
     };
 
     const prev = byPair.get(key);
@@ -489,6 +500,9 @@ export function buildScene(
       faded: prev.faded && candidate.faded,
       // 只要其中之一是引用,这条边的方向就值得用粒子表达
       hasCitation: prev.hasCitation || candidate.hasCitation,
+      // 引用方向只认那条引用边自己的,不能被语义边的方向覆盖
+      citationFrom: prev.citationFrom ?? candidate.citationFrom,
+      citationTo: prev.citationTo ?? candidate.citationTo,
       active: prev.active || candidate.active,
     });
   }

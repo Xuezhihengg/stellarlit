@@ -105,6 +105,9 @@ function Timeline({
 }) {
   const firstActive = minYear === null ? -1 : ticks.findIndex((y) => y >= minYear);
   const lastIndex = ticks.length - 1;
+  const hasRange = firstActive >= 0;
+  /** 没选年份时高亮段铺满整条轴、但完全透明:于是它"淡出"之后仍有一个稳定的起点 */
+  const rangeStart = hasRange ? firstActive : 0;
 
   return (
     <div className="relative" style={{ width: ticks.length * TICK_W }}>
@@ -117,20 +120,31 @@ function Timeline({
           maskImage: "linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent)",
         }}
       />
-      {firstActive >= 0 ? (
-        <span
-          className="pointer-events-none absolute top-0 h-px bg-accent/55"
-          style={{
-            left: TRACK_INSET + firstActive * TICK_W,
-            width: (lastIndex - firstActive) * TICK_W,
-            boxShadow: "0 0 7px color-mix(in srgb, var(--accent) 45%, transparent)",
-          }}
-        />
-      ) : null}
+      {/*
+        "正在看哪一段"的高亮段:**始终挂载**,靠透明度出现/消失。
+
+        之前它是条件渲染:选中年份时一下子长出来,点「全部」时一下子没了 ——
+        和右下角关系筛选的开关不是一种语言(那边是淡到 35%)。
+        现在换成同一种淡入淡出,左端与宽度也走同一段过渡,
+        于是换年份时高亮是"滑过去"的,而不是跳到另一段。
+      */}
+      <span
+        className="pointer-events-none absolute top-0 h-px bg-accent/55"
+        style={{
+          left: TRACK_INSET + rangeStart * TICK_W,
+          width: (lastIndex - rangeStart) * TICK_W,
+          opacity: hasRange ? 1 : 0,
+          boxShadow: "0 0 7px color-mix(in srgb, var(--accent) 45%, transparent)",
+          transition:
+            "left var(--dur-fast) var(--ease-out), width var(--dur-fast) var(--ease-out), opacity var(--dur-fast) var(--ease-out)",
+        }}
+      />
 
       <div className="flex items-start">
         {ticks.map((y, i) => {
           const active = firstActive >= 0 && i >= firstActive;
+          // 被时间筛掉的年份:和关掉的关系图例一样淡下去,而不是整段变个颜色
+          const excluded = firstActive >= 0 && i < firstActive;
           return (
             <button
               key={y}
@@ -138,7 +152,9 @@ function Timeline({
               onClick={() => onPick(minYear === y ? null : y)}
               aria-pressed={minYear === y}
               title={`只看 ${y} 年及以后`}
-              className="group flex flex-col items-center"
+              className={`group flex flex-col items-center transition-opacity duration-[var(--dur-fast)] ${
+                excluded ? "opacity-40 hover:opacity-70" : "opacity-100"
+              }`}
               style={{ width: TICK_W }}
             >
               {/* 刻度从轴线上垂下来 */}

@@ -36,11 +36,14 @@ export function TopBar({ brand, title, meta, search, right, rightInset = 0 }: To
       <div className="pointer-events-auto min-w-[180px] shrink-0">{brand}</div>
 
       {/*
-        中间一列 = 大标题 + 种子输入框。
-        输入框是全局操作(换/并入种子),放在标题底下比塞进侧栏更像
-        "这片星空的总入口";侧栏则专注读图与提问。
+        大标题与种子输入**合成一个控件**。
+
+        之前是"一行标题 + 一个独立的输入框":两块各自有边界,看起来像
+        两个东西叠在一起。现在共用一层圆角底、一条细分割线:
+        上半是"现在看的是哪片星空",下半是"并入新的种子",聚焦时整块
+        一起亮边框 —— 读起来是一个"星图标题栏"。
       */}
-      <div className="pointer-events-auto flex min-w-0 max-w-[560px] flex-1 flex-col items-center gap-1.5">
+      <div className="pointer-events-auto flex min-w-0 max-w-[560px] flex-1 flex-col rounded-xl border border-hair bg-bg/45 px-4 pt-2.5 pb-1 backdrop-blur-md transition-colors duration-[var(--dur-fast)] focus-within:border-accent/35">
         <div className="flex w-full min-w-0 items-baseline justify-center gap-2">
           <div className="min-w-0 truncate text-center text-[15px] text-ink">
             {title ?? "还没有星空"}
@@ -51,10 +54,9 @@ export function TopBar({ brand, title, meta, search, right, rightInset = 0 }: To
             </div>
           ) : null}
         </div>
+        <div className="my-1 h-px bg-hair" />
         {search ? (
-          <div className="w-full max-w-[420px] rounded-lg bg-bg/55 p-0.5 backdrop-blur-md">
-            {search}
-          </div>
+          <div className="w-full">{search}</div>
         ) : null}
       </div>
 

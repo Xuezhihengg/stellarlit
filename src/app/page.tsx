@@ -121,6 +121,7 @@ export default function StarfieldPage() {
             value={query}
             busy={phase === "resolving" || phase === "growing"}
             growing={Boolean(payload)}
+            bare
             onChange={setQuery}
             onSubmit={() => void search()}
           />

@@ -15,7 +15,9 @@ import { worldToScreen, type Camera } from "@/lib/design/camera";
 import { edgeCurve, edgeSeed, pointOnEdge } from "@/lib/design/edge-curve";
 import { placeLabelBlock, wrapByWidth } from "@/lib/design/label-layout";
 import { smoothstep } from "@/lib/design/motion";
-import { domainTone, domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
+import { nebulaOutline } from "@/lib/design/nebula";
+import { domainToneBase, hexA, PALETTES, type CanvasPalette } from "@/lib/design/palette";
+import { hashSeed } from "@/lib/graph/rng";
 import type { Scene, SceneBlob, SceneEdge } from "@/lib/graph/scene";
 import type { Theme } from "@/hooks/use-theme";
 import type { ViewLevel } from "@/types/starfield";
@@ -106,6 +108,7 @@ export interface RenderInput {
  *
  * 三层不是三套画面,而是同一张图的三种读法 —— 交叉淡入让「缩放」看起来像
  * 抽象层级在切换,而不是图片在放大。
+ *
  */
 function levelAlpha(level: ViewLevel) {
   switch (level) {
@@ -211,28 +214,26 @@ function drawNebulae(
   for (const d of scene.domains) {
     // 极缓慢的呼吸:幅度小到"几乎察觉不到,但画面是活的"
     const breathe = 1 + Math.sin(time * 0.2 + d.tone) * 0.014;
-    const tone = domainTone(d.tone, theme);
-    const core = tone.replace(/[\d.]+\)$/, "0.13)");
-    const rim = tone.replace(/[\d.]+\)$/, "0.05)");
 
     const parts = d.blobs?.length ? d.blobs : [{ x: d.x, y: d.y, r: d.r }];
 
-    ctx.globalAlpha = alpha;
-    for (const blob of parts) {
+    ctx.globalAlpha = 1;
+    parts.forEach((blob, i) => {
       const c = worldToScreen(camera, width, height, { x: blob.x, y: blob.y });
       const r = blob.r * camera.scale * breathe;
-      if (r < 12) continue;
-      if (c.x + r < 0 || c.x - r > width || c.y + r < 0 || c.y - r > height) continue;
+      if (r < 12) return;
+      if (c.x + r < 0 || c.x - r > width || c.y + r < 0 || c.y - r > height) return;
 
-      const g = ctx.createRadialGradient(c.x, c.y, r * 0.05, c.x, c.y, r);
-      g.addColorStop(0, core);
-      g.addColorStop(0.62, rim);
-      g.addColorStop(1, "transparent");
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
+      paintSoftBlob(
+        ctx,
+        c.x,
+        c.y,
+        r * 0.86,
+        hashSeed(`${d.id}:${i}`) / 4294967296,
+        (a) => hexA(domainToneBase(d.tone, theme), a),
+        0.1 * alpha,
+      );
+    });
   }
 
   ctx.restore();
@@ -249,25 +250,84 @@ function drawBlobs(
 ): void {
   ctx.save();
   ctx.globalCompositeOperation = theme === "dark" ? "lighter" : "source-over";
-  for (const b of blobs) {
+  blobs.forEach((b, i) => {
     const c = worldToScreen(camera, width, height, { x: b.x, y: b.y });
     const r = b.r * camera.scale;
-    if (r < 14) continue;
-    if (c.x + r < 0 || c.x - r > width || c.y + r < 0 || c.y - r > height) continue;
+    if (r < 14) return;
+    if (c.x + r < 0 || c.x - r > width || c.y + r < 0 || c.y - r > height) return;
 
-    const g = ctx.createRadialGradient(c.x, c.y, 0, c.x, c.y, r);
-    const tone = domainTone(b.tone, theme);
-    g.addColorStop(0, tone);
-    g.addColorStop(0.6, tone.replace(/[\d.]+\)$/, "0.04)"));
-    g.addColorStop(1, "transparent");
+    ctx.globalAlpha = 1;
+    paintSoftBlob(
+      ctx,
+      c.x,
+      c.y,
+      r * 0.86,
+      hashSeed(`${b.id}:${i}`) / 4294967296,
+      (a) => hexA(domainToneBase(b.tone, theme), a),
+      0.24 * alpha,
+    );
+  });
+  ctx.restore();
+}
 
-    ctx.globalAlpha = alpha;
-    ctx.fillStyle = g;
+/**
+ * 一团"云",而不是一个"光晕"。
+ *
+ * 一段径向渐变画出来的圆,边界永远是完美的圆弧 —— 叠得再多也只是几个圆。
+ * 这里的做法是同一套**带起伏的轮廓**叠四层:外圈很淡、内圈更亮,
+ * 每一层用同一粒种子,所以几层是同心的异形而不是互相打结。
+ * 结果是:边缘是毛的、内部是软的,像云,不像灯泡。
+ *
+ * 轮廓点由 lib/design/nebula.ts 生成(纯几何、可测);
+ * 这里只负责把点连成平滑闭合曲线再填色。
+ */
+function paintSoftBlob(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  r: number,
+  seed: number,
+  colorAt: (alpha: number) => string,
+  strength: number,
+): void {
+  /**
+   * 外淡内亮八层,比例与透明度一起收。
+   *
+   * 层数不是为了好看,而是为了**没有台阶**:四层时两层之间的半径差太大,
+   * 叠在深色背景上能看出一圈圈轮廓(像等高线);八层之后每层只差 7% 半径,
+   * 叠出来的核心约等于 strength * 1.24,过渡是连续的。
+   */
+  const layers = [
+    { scale: 1, weight: 0.06 },
+    { scale: 0.93, weight: 0.08 },
+    { scale: 0.86, weight: 0.1 },
+    { scale: 0.79, weight: 0.12 },
+    { scale: 0.72, weight: 0.14 },
+    { scale: 0.65, weight: 0.16 },
+    { scale: 0.58, weight: 0.18 },
+    { scale: 0.5, weight: 0.2 },
+  ] as const;
+
+  for (const layer of layers) {
+    const pts = nebulaOutline(cx, cy, r * layer.scale, seed);
+    const n = pts.length;
+    const last = pts[n - 1];
+    const first = pts[0];
+    if (!last || !first) continue;
+
+    // 闭合的平滑曲线:每段用相邻两点的中点作起止,点本身作控制点
     ctx.beginPath();
-    ctx.arc(c.x, c.y, r, 0, Math.PI * 2);
+    ctx.moveTo((last.x + first.x) / 2, (last.y + first.y) / 2);
+    for (let i = 0; i < n; i++) {
+      const cur = pts[i];
+      const next = pts[(i + 1) % n];
+      if (!cur || !next) continue;
+      ctx.quadraticCurveTo(cur.x, cur.y, (cur.x + next.x) / 2, (cur.y + next.y) / 2);
+    }
+    ctx.closePath();
+    ctx.fillStyle = colorAt(strength * layer.weight);
     ctx.fill();
   }
-  ctx.restore();
 }
 
 // ---------------------------------------------------------------------------

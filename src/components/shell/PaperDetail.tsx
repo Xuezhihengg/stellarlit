@@ -10,7 +10,6 @@ interface PaperDetailProps {
   payload: StarfieldPayload;
   paper: PaperNode;
   onFocusPaper: (id: string) => void;
-  onClear: () => void;
 }
 
 /**
@@ -20,7 +19,7 @@ interface PaperDetailProps {
  * 每条关系旁边都能展开模型判定时引用的**原文片段**,
  * 并且标出这条判定来自模型还是来自算法。
  */
-export function PaperDetail({ payload, paper, onFocusPaper, onClear }: PaperDetailProps) {
+export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) {
   const [openEdge, setOpenEdge] = useState<string | null>(null);
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
@@ -73,16 +72,7 @@ export function PaperDetail({ payload, paper, onFocusPaper, onClear }: PaperDeta
   return (
     <div className="flex flex-col gap-3.5">
       <header>
-        <div className="flex items-start justify-between gap-2">
-          <h2 className="text-[14px] leading-snug text-ink">{paper.title}</h2>
-          <button
-            type="button"
-            onClick={onClear}
-            className="mt-0.5 shrink-0 text-[11px] text-ink-4 transition-colors hover:text-ink-2"
-          >
-            收起
-          </button>
-        </div>
+        <h2 className="text-[14px] leading-snug text-ink">{paper.title}</h2>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-ink-4">
           <span>{paper.year || "年份未知"}</span>
@@ -139,7 +129,7 @@ export function PaperDetail({ payload, paper, onFocusPaper, onClear }: PaperDeta
                 : { maskImage: "linear-gradient(to bottom, #000 62%, transparent 100%)" }
             }
           >
-            <Collapsible open={abstractOpen} collapsedHeight={64}>
+            <Collapsible open={abstractOpen} collapsedHeight={96}>
               <p className="text-[12px] leading-[1.75] text-ink-2">{paper.abstract}</p>
             </Collapsible>
           </div>
@@ -199,8 +189,8 @@ export function PaperDetail({ payload, paper, onFocusPaper, onClear }: PaperDeta
                   </button>
 
                   <Collapsible open={isOpen}>
-                    <ul className="flex flex-col border-t border-hair px-1.5 py-1.5">
-                      {items.slice(0, 40).map((edge) => {
+                    <ul className="flex flex-col gap-1 border-t border-hair px-1.5 py-1.5">
+                      {items.slice(0, 40).map((edge, row) => {
                         const otherId = edge.source === paper.id ? edge.target : edge.source;
                         const other = paperById.get(otherId);
                         const edgeOpen = openEdge === edge.id;
@@ -212,7 +202,11 @@ export function PaperDetail({ payload, paper, onFocusPaper, onClear }: PaperDeta
                               onClick={() => setOpenEdge(edgeOpen ? null : edge.id)}
                               aria-expanded={edgeOpen}
                               className={`w-full rounded-md px-2 py-1.5 text-left transition-colors duration-[var(--dur-fast)] ${
-                                edgeOpen ? "bg-hair/40" : "hover:bg-hair/30"
+                                edgeOpen
+                                  ? "bg-hair/50"
+                                  : row % 2 === 0
+                                    ? "bg-hair/25 hover:bg-hair/45"
+                                    : "bg-hair/10 hover:bg-hair/45"
                               }`}
                             >
                               <span className="line-clamp-2 text-[11.5px] leading-snug text-ink-2">
@@ -270,13 +264,6 @@ export function PaperDetail({ payload, paper, onFocusPaper, onClear }: PaperDeta
       </section>
 
       <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => onFocusPaper(paper.id)}
-          className="text-[10.5px] text-accent/80 transition-colors hover:text-accent"
-        >
-          聚焦这篇论文 →
-        </button>
         {paper.doi || paper.urls.landing ? (
           <a
             href={paper.urls.landing ?? paper.doi}

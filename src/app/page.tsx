@@ -6,6 +6,7 @@ import { AssistantRail } from "@/components/shell/AssistantRail";
 import { AccountMenu } from "@/components/shell/AccountMenu";
 import { BottomBar } from "@/components/shell/BottomBar";
 import { BrandMark } from "@/components/shell/BrandMark";
+import { QuotaNotice } from "@/components/shell/QuotaNotice";
 import { RelationLegend } from "@/components/shell/RelationLegend";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { TopBar } from "@/components/shell/TopBar";
@@ -95,8 +96,12 @@ export default function StarfieldPage() {
         onSelect={setSelected}
         // 双击星星 = "我要看这篇的详情":侧栏收着就顺手打开
         onStarDoubleClick={() => setCollapsed(false)}
+        // 侧栏开着时,单击直接聚焦(详情就在手边,不用再点一次按钮)
+        focusOnSelect={!collapsed}
         onViewLevelChange={setLevel}
       />
+
+      <QuotaNotice rightInset={collapsed ? 0 : RAIL_WIDTH} />
 
       <TopBar
         brand={<BrandMark />}

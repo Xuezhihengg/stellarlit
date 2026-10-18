@@ -66,6 +66,7 @@ export async function POST(req: Request): Promise<Response> {
         const quota = e instanceof UpstreamError ? e.quota : undefined;
         send({
           type: "error",
+          code: quota ? "quota" : "upstream",
           message: quota
             ? `OpenAlex 的每日请求额度已用完,约 ${Math.max(0.1, quota.resetAfterSec / 3600).toFixed(1)} 小时后重置。已构建过的星空不受影响。`
             : message,

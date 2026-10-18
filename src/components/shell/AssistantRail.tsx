@@ -41,7 +41,6 @@ export function AssistantRail({
   const setQuery = useStarfieldStore((s) => s.setQuery);
   const search = useStarfieldStore((s) => s.search);
   const grow = useStarfieldStore((s) => s.grow);
-  const setSelected = useStarfieldStore((s) => s.setSelected);
   const dismissCandidates = useStarfieldStore((s) => s.dismissCandidates);
 
   const selectedPaper = useMemo(() => {
@@ -112,7 +111,8 @@ export function AssistantRail({
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
-        {error ? (
+        {/* 额度是全局状态,由页面上的 QuotaNotice 显示;侧栏只留"这次操作"的错误 */}
+        {error && error.code !== "quota" ? (
           <div className="mb-4 rounded-lg border border-alert/30 px-3 py-2.5">
             <p className="text-[12px] text-alert">{error.message}</p>
             {error.hint ? (
@@ -143,7 +143,6 @@ export function AssistantRail({
             payload={payload}
             paper={selectedPaper}
             onFocusPaper={onFocusPaper}
-            onClear={() => setSelected(null)}
           />
         ) : (
           <EmptyState hasPayload={Boolean(payload)} />

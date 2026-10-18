@@ -22,6 +22,8 @@ export class ApiRequestError extends Error {
     message: string,
     readonly hint?: string,
     readonly status?: number,
+    /** 服务端给的机器可读分类(如 quota),用来决定这条错误该出现在哪 */
+    readonly code?: string,
   ) {
     super(message);
     this.name = "ApiRequestError";
@@ -49,7 +51,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const err = data as ApiError;
-    throw new ApiRequestError(err.error ?? `请求失败(${res.status})`, err.hint, res.status);
+    throw new ApiRequestError(
+      err.error ?? `请求失败(${res.status})`,
+      err.hint,
+      res.status,
+      err.code,
+    );
   }
   return data as T;
 }
@@ -116,7 +123,7 @@ export interface GrowStreamHandlers {
     estimatedTokens: number;
   }) => void;
   onDone: (payload: StarfieldPayload) => void;
-  onError: (message: string) => void;
+  onError: (message: string, code?: string) => void;
 }
 
 /**
@@ -147,7 +154,7 @@ export async function growStarfieldStream(
 
   if (!res.ok || !res.body) {
     const err = (await res.json().catch(() => ({}))) as ApiError;
-    handlers.onError(err.error ?? `请求失败(${res.status})`);
+    handlers.onError(err.error ?? `请求失败(${res.status})`, err.code);
     return;
   }
 
@@ -216,7 +223,10 @@ function dispatchEvent(
       handlers.onDone((event as unknown as { payload: StarfieldPayload }).payload);
       break;
     case "error":
-      handlers.onError(String(event.message ?? "构建失败"));
+      handlers.onError(
+        String(event.message ?? "构建失败"),
+        typeof event.code === "string" ? event.code : undefined,
+      );
       break;
     default:
       break;

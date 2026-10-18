@@ -42,6 +42,8 @@ interface StarMapProps {
   onSelect: (id: string | null) => void;
   /** 双击某颗星(用于"双击即打开详情侧栏") */
   onStarDoubleClick?: (id: string) => void;
+  /** 侧栏展开时,单击星体也顺手聚焦到它 */
+  focusOnSelect?: boolean;
   onViewLevelChange?: (level: ViewLevel) => void;
 }
 
@@ -72,6 +74,7 @@ export function StarMap({
   focus = null,
   onSelect,
   onStarDoubleClick,
+  focusOnSelect = false,
   onViewLevelChange,
 }: StarMapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -86,6 +89,8 @@ export function StarMap({
    */
   const onStarDoubleClickRef = useRef(onStarDoubleClick);
   onStarDoubleClickRef.current = onStarDoubleClick;
+  const focusOnSelectRef = useRef(focusOnSelect);
+  focusOnSelectRef.current = focusOnSelect;
   const sizeRef = useRef({ w: 0, h: 0, dpr: 1 });
   /** 画布尺寸还没测出来时的待办自适应,由首帧补上 */
   const pendingFitRef = useRef<Scene | null>(null);
@@ -324,6 +329,18 @@ export function StarMap({
       const world = screenToWorld(cameraRef.current, w, h, localPoint(e));
       const hit = hitTest(scene, world.x, world.y, cameraRef.current.scale);
       onSelect(hit?.id ?? null);
+
+      /**
+       * 侧栏开着时,单击直接聚焦这篇论文。
+       *
+       * 详情已经在手边,再点一次"聚焦"按钮是多余的一步;而侧栏收着时
+       * 单击只选中(双击才打开侧栏 + 聚焦),不改原来的探索手感。
+       */
+      if (hit && focusOnSelectRef.current) {
+        const scale = clampScale(Math.max(1.6, cameraRef.current.scale));
+        const inset = Math.min(rightInsetRef.current, w * 0.45);
+        targetRef.current = { x: hit.x + inset / 2 / scale, y: hit.y, scale };
+      }
     };
 
     const onDoubleClick = (e: MouseEvent) => {

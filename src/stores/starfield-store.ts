@@ -26,7 +26,8 @@ export type BuildPhase = "idle" | "resolving" | "confirming" | "growing" | "read
 interface StarfieldState {
   payload: StarfieldPayload | null;
   phase: BuildPhase;
-  error: { message: string; hint?: string } | null;
+  /** code 用来决定这条错误该出现在哪:quota 是全局提示,不进侧栏 */
+  error: { message: string; hint?: string; code?: string } | null;
   capabilities: CapabilityReport | null;
   candidates: SeedCandidate[];
   query: string;
@@ -53,6 +54,7 @@ interface StarfieldState {
   toggleKind: (kind: string) => void;
   setMinYear: (year: number | null) => void;
   dismissCandidates: () => void;
+  clearError: () => void;
   loadCapabilities: () => Promise<void>;
   loadPayload: (payload: StarfieldPayload) => void;
   /** 按 id 载入一片既有的星空(历史页跳转、深链都用它) */
@@ -62,8 +64,8 @@ interface StarfieldState {
   reset: () => void;
 }
 
-function toError(e: unknown): { message: string; hint?: string } {
-  if (e instanceof ApiRequestError) return { message: e.message, hint: e.hint };
+function toError(e: unknown): { message: string; hint?: string; code?: string } {
+  if (e instanceof ApiRequestError) return { message: e.message, hint: e.hint, code: e.code };
   return { message: e instanceof Error ? e.message : "未知错误" };
 }
 
@@ -93,6 +95,7 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
   setMinYear: (year) => set({ minYear: year }),
 
   dismissCandidates: () => set({ candidates: [], phase: get().payload ? "ready" : "idle" }),
+  clearError: () => set({ error: null, phase: get().payload ? "ready" : "idle" }),
 
   loadCapabilities: async () => {
     try {
@@ -193,11 +196,11 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
             },
           }),
         onDone: (done) => set({ payload: done, phase: "ready", streamProgress: null }),
-        onError: (message) =>
+        onError: (message, code) =>
           set({
             // 构建失败时回到 ready,而不是 error:老星空还在,用户不该被踢出画面
             phase: get().payload ? "ready" : "error",
-            error: { message },
+            error: { message, code },
             streamProgress: null,
           }),
       },

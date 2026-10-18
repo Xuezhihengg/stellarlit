@@ -170,8 +170,15 @@ export function StarMap({
   // 外部聚焦请求:把镜头移到目标星体并推近
   // ---------------------------------------------------------------------
   useEffect(() => {
-    if (!focus || !scene) return;
-    const node = scene.nodes.find((n) => n.id === focus.id);
+    if (!focus || !payload) return;
+    /**
+     * 只在**请求本身**变化时执行,不跟着 `scene` 重跑。
+     *
+     * scene 会因为选中项、筛选、时间轴而变化;如果它也在依赖里,
+     * 那么用户点一颗新星之后,这个旧请求会立刻把镜头再拽回原来的目标 ——
+     * 表现就是"单击没有聚焦"。读当前场景走 ref,而不是进依赖。
+     */
+    const node = liveRef.current.scene?.nodes.find((n) => n.id === focus.id);
     if (!node) return;
     const inset = rightInsetRef.current;
     const scale = clampScale(Math.max(1.6, cameraRef.current.scale));
@@ -181,7 +188,7 @@ export function StarMap({
       y: node.y,
       scale,
     };
-  }, [focus, scene]);
+  }, [focus, payload]);
 
   // ---------------------------------------------------------------------
   // 画布尺寸
@@ -337,7 +344,9 @@ export function StarMap({
        * 单击只选中(双击才打开侧栏 + 聚焦),不改原来的探索手感。
        */
       if (hit && focusOnSelectRef.current) {
-        const scale = clampScale(Math.max(1.6, cameraRef.current.scale));
+        // 每次单击都真的**推近**一点,而不只是在已经放大的视角里挪一下中心。
+        // 当前已经很大时按同一倍率继续推,直到相机上限。
+        const scale = clampScale(Math.max(1.7, cameraRef.current.scale * 1.35));
         const inset = Math.min(rightInsetRef.current, w * 0.45);
         targetRef.current = { x: hit.x + inset / 2 / scale, y: hit.y, scale };
       }

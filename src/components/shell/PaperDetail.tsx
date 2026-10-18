@@ -39,8 +39,6 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
     (e) => e.layer !== "derived" && (e.source === paper.id || e.target === paper.id),
   );
 
-  const citationCount = relations.filter((e) => e.kind === "CITES").length;
-
   /**
    * 按关系类型分组。
    *
@@ -256,11 +254,6 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
           </div>
         )}
 
-        {citationCount > 0 ? (
-          <p className="mt-2 font-mono text-[10px] text-ink-4">
-            其中 {citationCount} 条为引用关系(来自 OpenAlex,可公开核验)
-          </p>
-        ) : null}
       </section>
 
       <div className="flex flex-wrap gap-2">

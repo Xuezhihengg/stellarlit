@@ -44,6 +44,13 @@ export function Collapsible({
     return () => ro.disconnect();
   }, [children]);
 
+  /**
+   * 完全收起时让内容"不存在于交互里":高度是 0,但里面的按钮仍然在 tab
+   * 顺序里 —— 键盘用户会莫名其妙跳进一段看不见的内容。inert 一次解决
+   * 焦点、点击与读屏三件事。保留预览高度时不禁用(预览本来就在场)。
+   */
+  const hidden = !open && collapsedHeight === 0;
+
   return (
     <div
       className={`overflow-hidden transition-[max-height,opacity] duration-[var(--dur-base)] ${className}`}
@@ -53,7 +60,8 @@ export function Collapsible({
         opacity: open || collapsedHeight > 0 ? 1 : 0,
         transitionTimingFunction: "var(--ease-out)",
       }}
-      aria-hidden={!open && collapsedHeight === 0}
+      aria-hidden={hidden}
+      inert={hidden}
     >
       <div ref={innerRef}>{children}</div>
     </div>

@@ -105,7 +105,12 @@ export interface SceneEdge {
   dash: number[] | null;
   /** 两端至少有一端是高亮节点 */
   active: boolean;
-  /** 所属关系类型被关掉:淡出,但保留在画面上 */
+  /**
+   * 被筛掉:关系类型被关掉,或两端都落在时间范围外。
+   *
+   * 注意是"淡出",不是"移除" —— 渲染层的淡入淡出按 edgeId 查当前透明度,
+   * 边一旦从场景里消失,就没有任何东西可以播那段过渡了。
+   */
   faded: boolean;
   /**
    * 写在边旁边的文字 —— **只含语义关系**。
@@ -431,6 +436,18 @@ export function buildScene(
   if (hoveredId) activeIds.add(hoveredId);
 
   /**
+   * 被时间轴筛掉的论文。
+   *
+   * 单独留一份、而不是复用 `node.dimmed`:那个标志还把"关系类型全关掉"
+   * 的星星算了进去,两者混在一起会让时间筛选把不相干的边也一起压暗。
+   */
+  const yearDimmed = new Set<NodeId>(
+    minYear === null
+      ? []
+      : paperNodes.filter((n) => n.year > 0 && n.year < minYear).map((n) => n.id),
+  );
+
+  /**
    * 一对论文只保留一条边。
    *
    * 冲突时的取舍:语义边优先于引用边 —— 引用是骨架,到处都有;
@@ -446,10 +463,16 @@ export function buildScene(
     const b = index.get(e.target);
     if (a === undefined || b === undefined || a === b) continue;
 
-    const na = nodes[a];
-    const nb = nodes[b];
-    // 时间轴过滤:两端都被筛掉才隐藏,一端留下的边仍然有意义
-    if (na?.dimmed && nb?.dimmed) continue;
+    /**
+     * 时间轴过滤:两端都被筛掉的边**留在场景里**,只标记为 faded。
+     *
+     * 之前这里直接 `continue` —— 边从场景里消失了,而淡出是按 edgeId
+     * 逐帧逼近的:边都不在了,自然没有过渡。用户看到的就是"点一下年份,
+     * 线瞬间没了"。筛掉不等于删除:它应该和星体一样暗下去,再亮回来。
+     *
+     * 只有一端被筛掉时,边仍然有意义(连着还看得见的那篇),保持原亮度。
+     */
+    const timeHidden = yearDimmed.has(e.source) && yearDimmed.has(e.target);
 
     const key = `${Math.min(a, b)}|${Math.max(a, b)}`;
     const layer: "structural" | "semantic" = e.layer === "semantic" ? "semantic" : "structural";
@@ -467,7 +490,7 @@ export function buildScene(
       tone: EDGE_TONE[e.kind] ?? "ink4",
       dash: SOLID,
       active: activeIds.size > 0 && (activeIds.has(e.source) || activeIds.has(e.target)),
-      faded: Boolean(dimmedKinds?.has(e.kind)),
+      faded: Boolean(dimmedKinds?.has(e.kind)) || timeHidden,
       label: layer === "semantic" ? (EDGE_LABEL[e.kind] ?? e.kind) : "",
       kinds: [EDGE_LABEL[e.kind] ?? e.kind],
       hasCitation: e.kind === "CITES",

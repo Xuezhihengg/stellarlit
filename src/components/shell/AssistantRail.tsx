@@ -77,34 +77,19 @@ export function AssistantRail({
       }}
       aria-label="观星台"
     >
-      <header className="flex items-center justify-between border-b border-hair px-6 py-5">
-        <div className="flex items-baseline gap-2">
-          <h1 className="text-[12px] tracking-[0.1em] text-ink">观星台</h1>
-          <span className="font-mono text-[9.5px] tracking-[0.1em] text-ink-4 uppercase">
-            OpenAlex · arXiv
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {capabilities ? (
-            <span
-              title={
-                capabilities.llm
-                  ? `已连接 ${capabilities.llmModel ?? "大模型"}`
-                  : "未配置大模型密钥:关系判定将使用启发式规则,并在结果里如实标注"
-              }
-              className={`rounded-full border px-1.5 py-px text-[9.5px] ${
-                capabilities.llm ? "border-accent/40 text-accent" : "border-warm/40 text-warm"
-              }`}
-            >
-              {capabilities.llm ? "模型已连接" : "启发式模式"}
-            </span>
-          ) : null}
-        </div>
-      </header>
+      {/*
+        标题位置直接就是切换滑钮。
 
-      {/* 两个标签:观星台(种子/详情/构建)与 RAG 问答 */}
-      <div className="px-6 pt-3" role="tablist" aria-label="观星台视图">
-        <div className="relative grid grid-cols-2 rounded-lg border border-hair bg-bg/40 p-0.5">
+        之前是"标题一行 + 标签一行":同一个面板名出现两次,还多占四十像素。
+        现在标题退场,滑钮本身就是这一栏的标题 —— 当前激活的是哪一页,
+        一眼就能看出来。
+      */}
+      <header className="flex items-center justify-between gap-3 border-b border-hair px-6 py-4">
+        <div
+          className="relative grid flex-1 grid-cols-2 rounded-lg border border-hair bg-bg/40 p-0.5"
+          role="tablist"
+          aria-label="观星台视图"
+        >
           <span
             aria-hidden="true"
             className="pointer-events-none absolute inset-y-0.5 left-0.5 w-[calc(50%-0.25rem)] rounded-md bg-hair-2/50 transition-transform duration-[var(--dur-base)]"
@@ -137,7 +122,24 @@ export function AssistantRail({
             RAG 问答
           </button>
         </div>
-      </div>
+
+        <div className="flex shrink-0 items-center gap-2">
+          {capabilities ? (
+            <span
+              title={
+                capabilities.llm
+                  ? `已连接 ${capabilities.llmModel ?? "大模型"}`
+                  : "未配置大模型密钥:关系判定将使用启发式规则,并在结果里如实标注"
+              }
+              className={`rounded-full border px-1.5 py-px text-[9.5px] ${
+                capabilities.llm ? "border-accent/40 text-accent" : "border-warm/40 text-warm"
+              }`}
+            >
+              {capabilities.llm ? "模型已连接" : "启发式模式"}
+            </span>
+          ) : null}
+        </div>
+      </header>
 
       <div className="relative min-h-0 flex-1">
         {/* 观星台:保留在 DOM 里(只是隐藏),切换标签不会丢掉展开态与滚动位置 */}
@@ -221,6 +223,8 @@ export function AssistantRail({
               <span>{payload.graph.stats.papers} 篇</span>
               <span>{payload.graph.stats.edges} 条边</span>
               <span>{(payload.meta.durationMs / 1000).toFixed(1)}s</span>
+              {/* 标题栏让给滑钮后,数据来源挪到这里:不抢位置,但仍在 */}
+              <span className="tracking-[0.08em] text-ink-4/80">OpenAlex · arXiv</span>
             </div>
             <div className="flex flex-wrap gap-x-4 gap-y-1">
               <span>

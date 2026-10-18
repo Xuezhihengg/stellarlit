@@ -109,15 +109,29 @@ export interface RenderInput {
  * 三层不是三套画面,而是同一张图的三种读法 —— 交叉淡入让「缩放」看起来像
  * 抽象层级在切换,而不是图片在放大。
  *
+ * 有一点要特别注意:**文字不跟着层级开关**。层级是按缩放阈值离散跳的,
+ * 如果把标题挂在层级上,越过阈值的那一帧标题就会"啪"地出现/消失。
+ * 所以两类标题的可见度都直接由缩放算,并且是一段区间而不是一个点。
  */
-function levelAlpha(level: ViewLevel) {
+function levelAlpha(level: ViewLevel, scale: number) {
+  /**
+   * 论文标题:0.68 开始浮出、0.9 完全显示。
+   * paper 阈值(0.78)正好落在区间中间 —— 跨过它时标题在半途,
+   * 所以缩放看到的是"渐渐出现/退下去"。
+   */
+  const paperLabel = smoothstep(0.76, 1, scale);
+  /**
+   * 一级领域标题:拉远最亮,推近时一路退场,同样是一段区间。
+   * 它挂在星云中心上,所以缩放时跟着云一起走,而不是被顶到云外面。
+   */
+  const domainLabel = 1 - smoothstep(0.5, 0.95, scale);
   switch (level) {
     case "domain":
-      return { nebula: 1, blob: 0.12, edge: 0, node: 0.06, paperLabel: 0, communityLabel: 0, domainLabel: 1 };
+      return { nebula: 1, blob: 0.12, edge: 0, node: 0.06, paperLabel, domainLabel };
     case "community":
-      return { nebula: 0.62, blob: 1, edge: 0.55, node: 0.62, paperLabel: 0.12, communityLabel: 1, domainLabel: 0.35 };
+      return { nebula: 0.62, blob: 1, edge: 0.55, node: 0.62, paperLabel, domainLabel };
     default:
-      return { nebula: 0.22, blob: 0.4, edge: 1, node: 1, paperLabel: 1, communityLabel: 0.5, domainLabel: 0.05 };
+      return { nebula: 0.22, blob: 0.4, edge: 1, node: 1, paperLabel, domainLabel };
   }
 }
 
@@ -132,7 +146,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   const pointer = input.pointer ?? { x: 0, y: 0 };
   const anim = input.anim ?? createAnimState();
   const p = PALETTES[theme];
-  const a = levelAlpha(level);
+  const a = levelAlpha(level, camera.scale);
 
   ctx.clearRect(0, 0, width, height);
 
@@ -191,7 +205,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   }
 
   // ---------- 5. 标签 ----------
-  drawLabels(ctx, scene, camera, width, height, p, a, level, fx, fy, anim);
+  drawLabels(ctx, scene, camera, width, height, p, a, fx, fy, anim);
 }
 
 // ---------------------------------------------------------------------------
@@ -978,7 +992,7 @@ function drawCitationParticles(
 // 标签
 // ---------------------------------------------------------------------------
 
-const LABEL_LIMIT = { paper: 26, community: 14, domain: 10 } as const;
+const LABEL_LIMIT = { paper: 26, domain: 10 } as const;
 
 function drawLabels(
   ctx: CanvasRenderingContext2D,
@@ -988,7 +1002,6 @@ function drawLabels(
   height: number,
   p: CanvasPalette,
   a: ReturnType<typeof levelAlpha>,
-  level: ViewLevel,
   fx: Float64Array,
   fy: Float64Array,
   anim: AnimState,
@@ -997,8 +1010,8 @@ function drawLabels(
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  // ---------- 论文标签:只在推近时出现,且只标最重要的那些 ----------
-  if (a.paperLabel > 0.02 && level === "paper") {
+  // ---------- 论文标签:推近时渐渐浮出(可见度由缩放连续给出),且只标最重要的那些 ----------
+  if (a.paperLabel > 0.02) {
     const important = scene.nodes
       /**
        * 焦点节点无条件进入候选。
@@ -1122,28 +1135,16 @@ function drawLabels(
     }
   }
 
-  // ---------- 社区标签 ----------
-  if (a.communityLabel > 0.02) {
-    const sorted = [...scene.communities].sort((x, y) => y.count - x.count).slice(0, LABEL_LIMIT.community);
-    for (const b of sorted) {
-      const c = worldToScreen(camera, width, height, { x: b.x, y: b.y });
-      const r = b.r * camera.scale;
-      if (r < 26) continue;
-      if (c.x < 30 || c.x > width - 30 || c.y < 24 || c.y > height - 24) continue;
-
-      ctx.globalAlpha = 0.85 * a.communityLabel;
-      ctx.font = `11.5px ${SANS}`;
-      ctx.fillStyle = p.ink2;
-      ctx.fillText(b.label, c.x, c.y - r * 0.55);
-
-      ctx.globalAlpha = 0.4 * a.communityLabel;
-      ctx.font = `9px ${MONO}`;
-      ctx.fillStyle = p.ink4;
-      ctx.fillText(`${b.count} 篇 · ${b.medianYear}`, c.x, c.y - r * 0.55 + 15);
-    }
-  }
-
-  // ---------- 领域标题:整张图最大的字,只有拉远时才出现 ----------
+  /**
+   * ---------- 一级领域标题 ----------
+   *
+   * 只保留领域这一级标题:二级(社区/子领域)标题挂在星团上,
+   * 缩到中间层时会和星团本身抢注意力,而它回答的问题("这是哪个大方向")
+   * 已经由一级标题回答了。
+   *
+   * 位置锚在**星云中心**:缩放时它跟着云一起走、始终在云的正中 ——
+   * 之前是"抬到云顶再按视口高度夹一下",于是越缩越偏,最后和云脱节。
+   */
   if (a.domainLabel > 0.02) {
     const labels = scene.domains.length
       ? [...scene.domains].sort((x, y) => y.count - x.count).slice(0, LABEL_LIMIT.domain)
@@ -1151,11 +1152,10 @@ function drawLabels(
 
     for (const d of labels) {
       const c = worldToScreen(camera, width, height, { x: d.x, y: d.y });
-      if (c.x < 40 || c.x > width - 40 || c.y < 30 || c.y > height - 30) continue;
+      // 允许一部分出屏(云心本来就可能贴着边),完全出去才跳过
+      if (c.x < -160 || c.x > width + 160 || c.y < -60 || c.y > height + 60) continue;
 
-      // 拉近时星云标题该退场,而不是被论文标签淹掉
-      // 标题落在云顶而不是云心:云心一定是星体最密的地方,标题压上去就糊了
-      const cy = c.y - Math.min(d.r * camera.scale * 0.72, height * 0.3);
+      const cy = c.y;
       ctx.globalAlpha = 0.9 * a.domainLabel;
       ctx.font = `500 15px ${SANS}`;
       ctx.fillStyle = p.ink;

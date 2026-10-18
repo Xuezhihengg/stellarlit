@@ -113,15 +113,24 @@ export function AssistantRail({
               tab === "ask" ? "text-ink" : "text-ink-4 hover:text-ink-2"
             }`}
           >
-            RAG 问答
+            文献问答
           </button>
         </div>
       </header>
 
       <div className="relative min-h-0 flex-1">
-        {/* 观星台:保留在 DOM 里(只是隐藏),切换标签不会丢掉展开态与滚动位置 */}
+        {/*
+          两页都**常驻在 DOM 里**,靠透明度交叉切换:
+          切换时旧内容先淡出、新内容同时淡入;滚动位置、展开态、问答记录
+          都不会因为切标签而丢。inert 让隐藏页不可聚焦、不可点击。
+        */}
         <div
-          className={`h-full overflow-y-auto px-6 py-5 ${tab === "detail" ? "block" : "hidden"}`}
+          className={`absolute inset-0 overflow-y-auto px-6 py-5 transition-opacity duration-[var(--dur-base)] ${
+            tab === "detail" ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+          style={{ transitionTimingFunction: "var(--ease-out)" }}
+          aria-hidden={tab !== "detail"}
+          inert={tab !== "detail"}
         >
             {/* 额度是全局状态,由页面上的 QuotaNotice 显示;侧栏只留"这次操作"的错误 */}
             {error && error.code !== "quota" ? (
@@ -165,7 +174,12 @@ export function AssistantRail({
 
         {/* 问答:同样保持挂载,切回观星台再回来时答案还在 */}
         <div
-          className={`h-full overflow-y-auto px-6 py-5 ${tab === "ask" ? "block" : "hidden"}`}
+          className={`absolute inset-0 overflow-y-auto px-6 py-5 transition-opacity duration-[var(--dur-base)] ${
+            tab === "ask" ? "opacity-100" : "pointer-events-none opacity-0"
+          }`}
+          style={{ transitionTimingFunction: "var(--ease-out)" }}
+          aria-hidden={tab !== "ask"}
+          inert={tab !== "ask"}
         >
           {payload ? (
             <AskPanel

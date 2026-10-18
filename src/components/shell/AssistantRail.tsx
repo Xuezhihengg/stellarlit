@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { AskPanel } from "@/components/shell/AskPanel";
 import { BuildStatus } from "@/components/shell/BuildStatus";
@@ -51,6 +51,7 @@ export function AssistantRail({
   }, [payload, selectedId]);
 
   const busy = phase === "resolving" || phase === "growing";
+  const [tab, setTab] = useState<"detail" | "ask">("detail");
 
   return (
     <>
@@ -101,59 +102,116 @@ export function AssistantRail({
         </div>
       </header>
 
-      <div className="border-b border-hair px-6 py-4">
-        <SeedSearch
-          value={query}
-          busy={busy}
-          growing={Boolean(payload)}
-          onChange={setQuery}
-          onSubmit={() => void search()}
-        />
+      {/* 两个标签:观星台(种子/详情/构建)与 RAG 问答 */}
+      <div className="px-6 pt-3" role="tablist" aria-label="观星台视图">
+        <div className="relative grid grid-cols-2 rounded-lg border border-hair bg-bg/40 p-0.5">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0.5 left-0.5 w-[calc(50%-0.25rem)] rounded-md bg-hair-2/50 transition-transform duration-[var(--dur-base)]"
+            style={{
+              transform:
+                tab === "detail" ? "translateX(0)" : "translateX(calc(100% + 0.25rem))",
+              transitionTimingFunction: "var(--ease-out)",
+            }}
+          />
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "detail"}
+            onClick={() => setTab("detail")}
+            className={`relative z-10 rounded-md py-1.5 text-[11px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
+              tab === "detail" ? "text-ink" : "text-ink-4 hover:text-ink-2"
+            }`}
+          >
+            观星台
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "ask"}
+            onClick={() => setTab("ask")}
+            className={`relative z-10 rounded-md py-1.5 text-[11px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
+              tab === "ask" ? "text-ink" : "text-ink-4 hover:text-ink-2"
+            }`}
+          >
+            RAG 问答
+          </button>
+        </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto px-6 py-5">
-        {payload ? (
-          <div className="mb-4">
-            <AskPanel payload={payload} onFocusPaper={onFocusPaper} />
+      <div className="relative min-h-0 flex-1">
+        {/* 观星台:保留在 DOM 里(只是隐藏),切换标签不会丢掉展开态与滚动位置 */}
+        <div className={`h-full flex-col ${tab === "detail" ? "flex" : "hidden"}`}>
+          <div className="border-b border-hair px-6 py-4">
+            <SeedSearch
+              value={query}
+              busy={busy}
+              growing={Boolean(payload)}
+              onChange={setQuery}
+              onSubmit={() => void search()}
+            />
           </div>
-        ) : null}
 
-        {/* 额度是全局状态,由页面上的 QuotaNotice 显示;侧栏只留"这次操作"的错误 */}
-        {error && error.code !== "quota" ? (
-          <div className="mb-4 rounded-lg border border-alert/30 px-3 py-2.5">
-            <p className="text-[12px] text-alert">{error.message}</p>
-            {error.hint ? (
-              <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">{error.hint}</p>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            {/* 额度是全局状态,由页面上的 QuotaNotice 显示;侧栏只留"这次操作"的错误 */}
+            {error && error.code !== "quota" ? (
+              <div className="mb-4 rounded-lg border border-alert/30 px-3 py-2.5">
+                <p className="text-[12px] text-alert">{error.message}</p>
+                {error.hint ? (
+                  <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">
+                    {error.hint}
+                  </p>
+                ) : null}
+              </div>
             ) : null}
-          </div>
-        ) : null}
 
-        {phase === "growing" || phase === "resolving" ? (
-          <BuildStatus
-            label={buildLabel}
-            step={phase === "growing" ? 3 : 1}
-            total={4}
-            detail={
-              streamProgress
-                ? `第 ${streamProgress.round}/${streamProgress.depth} 层 · 已判定 ${streamProgress.judged} 对论文 · 找到 ${streamProgress.matched} 条关系 · ${streamProgress.llmCalls} 次模型调用`
-                : undefined
-            }
-          />
-        ) : phase === "confirming" ? (
-          <SeedConfirm
-            candidates={candidates}
-            onPick={(c) => void grow(c.id)}
-            onDismiss={dismissCandidates}
-          />
-        ) : selectedPaper && payload ? (
-          <PaperDetail
-            payload={payload}
-            paper={selectedPaper}
-            onFocusPaper={onFocusPaper}
-          />
-        ) : (
-          <EmptyState hasPayload={Boolean(payload)} />
-        )}
+            {phase === "growing" || phase === "resolving" ? (
+              <BuildStatus
+                label={buildLabel}
+                step={phase === "growing" ? 3 : 1}
+                total={4}
+                detail={
+                  streamProgress
+                    ? `第 ${streamProgress.round}/${streamProgress.depth} 层 · 已判定 ${streamProgress.judged} 对论文 · 找到 ${streamProgress.matched} 条关系 · ${streamProgress.llmCalls} 次模型调用`
+                    : undefined
+                }
+              />
+            ) : phase === "confirming" ? (
+              <SeedConfirm
+                candidates={candidates}
+                onPick={(c) => void grow(c.id)}
+                onDismiss={dismissCandidates}
+              />
+            ) : selectedPaper && payload ? (
+              <PaperDetail
+                payload={payload}
+                paper={selectedPaper}
+                onFocusPaper={onFocusPaper}
+              />
+            ) : (
+              <EmptyState hasPayload={Boolean(payload)} />
+            )}
+          </div>
+        </div>
+
+        {/* 问答:同样保持挂载,切回观星台再回来时答案还在 */}
+        <div
+          className={`h-full overflow-y-auto px-6 py-5 ${tab === "ask" ? "block" : "hidden"}`}
+        >
+          {payload ? (
+            <AskPanel
+              payload={payload}
+              onFocusPaper={(id) => {
+                onFocusPaper(id);
+                setTab("detail");
+              }}
+            />
+          ) : (
+            <p className="text-[11.5px] leading-relaxed text-ink-4">
+              先在「观星台」里输入一篇种子论文。问答只检索当前这片星空里的内容。
+            </p>
+          )}
+        </div>
       </div>
 
       {payload ? (

@@ -80,12 +80,12 @@ export function AskPanel({ payload, onFocusPaper }: AskPanelProps) {
 
   return (
     <section className="rounded-xl border border-hair bg-hair/15 p-3">
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-[10px] tracking-[0.14em] text-ink-4 uppercase">检索问答</span>
-        <span className="font-mono text-[9.5px] text-ink-4">
-          {payload.graph.stats.papers} 篇 · 摘要 + 关系证据
+      <p className="mb-2 text-[10.5px] leading-relaxed text-ink-4">
+        回答只依据这片星空的摘要与已验证关系;证据不足会明确说明。
+        <span className="ml-1 font-mono text-[9.5px]">
+          {payload.graph.stats.papers} 篇 · {payload.graph.stats.byLayer.semantic} 条关系
         </span>
-      </div>
+      </p>
 
       <div className="flex items-center gap-2 rounded-lg border border-hair-2 bg-bg/40 px-2.5 py-1.5 focus-within:border-accent/45">
         <input
@@ -150,7 +150,7 @@ export function AskPanel({ payload, onFocusPaper }: AskPanelProps) {
             <p className="mb-1.5 font-mono text-[9.5px] text-warm">模型不可用 · 以下为检索原文</p>
           ) : null}
           <p className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2">
-            {renderWithCitations(answer)}
+            {renderWithCitations(plainText(answer))}
           </p>
 
           {shownSources.length ? (
@@ -184,6 +184,16 @@ function sectionLabel(section: AskSource["section"]): string {
   if (section === "relation") return "关系证据";
   if (section === "title") return "论文信息";
   return "摘要";
+}
+
+/**
+ * 回答是纯文本渲染:模型偶尔仍会带 ** 加粗或 # 标题,
+ * 在这里去掉标记本身,而不是把星号原样给用户看。
+ */
+function plainText(text: string): string {
+  return text
+    .replace(/\*\*/g, "")
+    .replace(/^#{1,6}\s+/gm, "");
 }
 
 /** 把 [1][3] 渲染成不可点的小角标;点击整条来源去定位论文。 */

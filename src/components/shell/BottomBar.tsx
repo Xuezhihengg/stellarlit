@@ -32,10 +32,11 @@ export function BottomBar({
   const max = years.length ? Math.max(...years) : new Date().getFullYear();
   const ticks = min && max > min ? buildTicks(min, max) : [];
 
+  // 与侧栏同一个时长:图例是"跟着侧栏让开",不是自己先跑到位
   return (
     <div
       className="pointer-events-none fixed bottom-0 left-0 z-30 pb-8 pl-10"
-      style={{ right: rightInset, transition: "right var(--dur-base) var(--ease-out)" }}
+      style={{ right: rightInset, transition: "right var(--dur-slow) var(--ease-out)" }}
     >
       <div className="flex items-end justify-between gap-8">
         {/* ---------- 时间轴 ---------- */}

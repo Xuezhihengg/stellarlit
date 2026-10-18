@@ -20,10 +20,16 @@ interface TopBarProps {
  * 说明它的核心不是这张图。设置与历史收进右侧的状态区。
  */
 export function TopBar({ brand, title, meta, right, rightInset = 0 }: TopBarProps) {
+  /**
+   * 让开侧栏的距离必须**和侧栏本身一样快**。
+   *
+   * 之前这里是 --dur-base(280ms),而侧栏滑出是 --dur-slow(620ms):
+   * 顶栏 0.28 秒就位,侧栏还在走,看上去像两个互不相干的动作。
+   */
   return (
     <header
       className="pointer-events-none fixed top-0 left-0 z-30 flex items-start justify-between gap-6 py-7 pr-9 pl-9"
-      style={{ right: rightInset, transition: "right var(--dur-base) var(--ease-out)" }}
+      style={{ right: rightInset, transition: "right var(--dur-slow) var(--ease-out)" }}
     >
       <div className="pointer-events-auto min-w-[180px]">{brand}</div>
 

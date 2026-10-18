@@ -195,11 +195,16 @@ export function AssistantRail({
         onClick={onToggleCollapse}
         aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
         aria-expanded={!collapsed}
-        className="group fixed top-1/2 z-40 grid h-9 w-9 place-items-center rounded-full border border-hair-2 bg-bg/85 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md transition-[right,color,background-color,border-color] duration-[var(--dur-base)] hover:border-ink-4 hover:text-ink-2"
+        className="group fixed top-1/2 z-40 grid h-9 w-9 place-items-center rounded-full border border-hair-2 bg-bg/85 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md hover:border-ink-4 hover:text-ink-2"
         style={{
           right: collapsed ? 18 : 384,
           transform: collapsed ? "translate(0, -50%)" : "translate(50%, -50%)",
-          transitionTimingFunction: "var(--ease-out)",
+          /**
+           * 位移跟侧栏同速(620ms);颜色仍用快档(160ms)——
+           * 悬停反馈不该等半秒。
+           */
+          transition:
+            "right var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out), color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
         }}
       >
         <svg

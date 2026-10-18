@@ -12,7 +12,8 @@ export function Metric({ label, value, accent = false }: MetricProps) {
       <span className={`font-mono text-[12px] ${accent ? "text-accent" : "text-ink-2"}`}>
         {value}
       </span>
-      <span className="text-[10px] tracking-[0.1em] text-ink-4">{label}</span>
+      {/* 中文标签不需要英文那种大字距:0.1em 会让三个字散成三段 */}
+      <span className="text-[10px] tracking-[0.04em] text-ink-4">{label}</span>
     </div>
   );
 }

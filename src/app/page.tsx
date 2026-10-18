@@ -117,9 +117,9 @@ export default function StarfieldPage() {
           <>
             {payload ? (
               <div className="hidden items-center gap-4 lg:flex">
-                <Metric label="PAPERS" value={payload.graph.stats.papers} />
-                <Metric label="RELATIONS" value={payload.graph.stats.byLayer.semantic} />
-                <Metric label="FRONTIERS" value={payload.graph.stats.communities} />
+                <Metric label="篇论文" value={payload.graph.stats.papers} />
+                <Metric label="条关系" value={payload.graph.stats.byLayer.semantic} />
+                <Metric label="个前沿" value={payload.graph.stats.communities} />
               </div>
             ) : null}
             <ThemeToggle theme={theme} onToggle={toggleTheme} />

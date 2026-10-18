@@ -183,9 +183,9 @@ export function AssistantRail({
       {/*
         开关做成圆形浮窗,骑在侧栏左边缘上。
 
-        两个状态用同一个屏幕锚点:开着时它一半压在面板上、一半浮在星空里,
-        收起后停在屏幕右缘 —— 位置几乎没动,所以不需要重新找它。
-        这也让"打开 / 收起"读起来是同一个动作的往复,而不是两个按钮。
+        位置只有两个:开着时一半压在面板左缘、一半浮在星空里;
+        收起后停在屏幕右缘。两者用同一段缓出过渡连起来,
+        读起来是"这个按钮跟着面板走",而不是两个按钮在互换。
 
         它刻意放在 <aside> **外面**:放进去就会跟着面板一起滑出屏幕,
         收起之后就再也点不开了。
@@ -195,34 +195,50 @@ export function AssistantRail({
         onClick={onToggleCollapse}
         aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
         aria-expanded={!collapsed}
-        className="group fixed top-1/2 z-40 grid h-9 w-9 place-items-center rounded-full border border-hair-2 bg-bg/85 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md hover:border-ink-4 hover:text-ink-2"
+        className="group fixed top-1/2 z-40 grid h-[38px] w-[38px] place-items-center rounded-full border border-hair-2 bg-bg/90 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md hover:border-ink-4 hover:bg-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
         style={{
           right: collapsed ? 18 : 384,
           transform: collapsed ? "translate(0, -50%)" : "translate(50%, -50%)",
           /**
            * 位移跟侧栏同速(620ms);颜色仍用快档(160ms)——
-           * 悬停反馈不该等半秒。
+           * 悬停反馈不该等半秒。两段时长写在同一行里,
+           * 因为内联 transition 会整体覆盖类名上的 transition。
            */
           transition:
             "right var(--dur-slow) var(--ease-out), transform var(--dur-slow) var(--ease-out), color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out)",
         }}
       >
-        <svg
-          width="11"
-          height="11"
-          viewBox="0 0 10 10"
+        {/*
+          悬停说明:一个只有 < / > 的圆钮,含义得靠试。
+          说明文字向左浮出、只占悬停与键盘聚焦时 —— 平时不占视觉。
+        */}
+        <span
           aria-hidden="true"
-          className={`transition-transform duration-[var(--dur-base)] ${collapsed ? "rotate-180" : ""}`}
-          style={{ transitionTimingFunction: "var(--ease-out)" }}
+          className="pointer-events-none absolute right-full mr-3 translate-x-1 whitespace-nowrap rounded-md border border-hair-2 bg-bg/92 px-2.5 py-1 text-[10.5px] tracking-[0.04em] text-ink-2 opacity-0 shadow-[0_8px_22px_-12px_rgba(0,0,0,0.85)] backdrop-blur-md transition-[opacity,transform] duration-[var(--dur-fast)] group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
         >
-          <path
-            d="M6.4 1.6 L2.6 5 L6.4 8.4"
-            stroke="currentColor"
-            strokeWidth="1.3"
-            fill="none"
-            strokeLinecap="round"
-          />
-        </svg>
+          {collapsed ? "展开研究助手" : "收起研究助手"}
+        </span>
+
+        {/* 图标自己再吃一层悬停/按压缩放:位移归按钮,手感归图标 */}
+        <span className="grid place-items-center transition-transform duration-[var(--dur-fast)] group-hover:scale-110 group-active:scale-95">
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 10 10"
+            aria-hidden="true"
+            className={`transition-transform duration-[var(--dur-base)] ${collapsed ? "rotate-180" : ""}`}
+            style={{ transitionTimingFunction: "var(--ease-out)" }}
+          >
+            <path
+              d="M6.2 1.5 L2.4 5 L6.2 8.5"
+              stroke="currentColor"
+              strokeWidth="1.35"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </span>
       </button>
     </>
   );

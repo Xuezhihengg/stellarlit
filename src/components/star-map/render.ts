@@ -113,7 +113,7 @@ export interface RenderInput {
  * 如果把标题挂在层级上,越过阈值的那一帧标题就会"啪"地出现/消失。
  * 所以两类标题的可见度都直接由缩放算,并且是一段区间而不是一个点。
  */
-function levelAlpha(level: ViewLevel, scale: number) {
+function levelAlpha(scale: number) {
   /**
    * 论文标题:0.68 开始浮出、0.9 完全显示。
    * paper 阈值(0.78)正好落在区间中间 —— 跨过它时标题在半途,
@@ -125,14 +125,30 @@ function levelAlpha(level: ViewLevel, scale: number) {
    * 它挂在星云中心上,所以缩放时跟着云一起走,而不是被顶到云外面。
    */
   const domainLabel = 1 - smoothstep(0.5, 0.95, scale);
-  switch (level) {
-    case "domain":
-      return { nebula: 1, blob: 0.12, edge: 0, node: 0.06, paperLabel, domainLabel };
-    case "community":
-      return { nebula: 0.62, blob: 1, edge: 0.55, node: 0.62, paperLabel, domainLabel };
-    default:
-      return { nebula: 0.22, blob: 0.4, edge: 1, node: 1, paperLabel, domainLabel };
-  }
+
+  /**
+   * 星体与边:也按**缩放**连续变化,不再按层级取三档。
+   *
+   * 层级是按阈值离散跳的:越过 0.34 的那一刻,星体从 6% 直接跳到 62%,
+   * 越过 0.78 又从 62% 跳到 100% —— 看上去是"整张图闪了一下"。
+   * 现在分两段爬坡,阈值正好落在各自区间的半途:
+   *   0.20 → 0.50  : 星体 0.06 → 0.62,边 0 → 0.55
+   *   0.64 → 0.92  : 星体 0.62 → 1,边 0.55 → 1
+   * 缩放时星星是"渐渐亮起来"的,边的明暗与它同进同退。
+   */
+  const near = smoothstep(0.2, 0.5, scale);
+  const close = smoothstep(0.64, 0.92, scale);
+
+  return {
+    // 星云:拉远时最实,推近后让位给星体
+    nebula: 1 - 0.38 * near - 0.4 * close,
+    // 星团:中间层最亮,两端都收
+    blob: 0.12 + 0.88 * near - 0.6 * close,
+    edge: 0.55 * near + 0.45 * close,
+    node: 0.06 + 0.56 * near + 0.38 * close,
+    paperLabel,
+    domainLabel,
+  };
 }
 
 const toneOf = (key: string, p: CanvasPalette): string =>
@@ -146,7 +162,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   const pointer = input.pointer ?? { x: 0, y: 0 };
   const anim = input.anim ?? createAnimState();
   const p = PALETTES[theme];
-  const a = levelAlpha(level, camera.scale);
+  const a = levelAlpha(camera.scale);
 
   ctx.clearRect(0, 0, width, height);
 
@@ -175,11 +191,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   if (a.nebula > 0.01) drawNebulae(ctx, scene, camera, width, height, theme, a.nebula, time);
 
   // ---------- 2. 星团底光(比星云更亮一档,缩近时浮现) ----------
-  if (a.blob > 0.01 && a.blob < 1) {
-    drawBlobs(ctx, scene.communities, camera, width, height, theme, a.blob * 0.5);
-  } else if (a.blob >= 1) {
-    drawBlobs(ctx, scene.communities, camera, width, height, theme, 0.42);
-  }
+  /**
+   * 统一成"峰值 × 可见度"。
+   *
+   * 之前分成两段:可见度 <1 时乘 0.5,≥1 时固定 0.42 ——
+   * 可见度刚过 1 的那一帧反而变暗(0.5 → 0.42),是另一处缩放跳变。
+   */
+  if (a.blob > 0.01) drawBlobs(ctx, scene.communities, camera, width, height, theme, 0.42 * a.blob);
 
   // ---------- 3. 边 ----------
   if (a.edge > 0.01) drawEdges(ctx, scene, width, height, p, a.edge, level, fx, fy, time * 14, anim);
@@ -196,7 +214,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
    * 粒子会变成一片没意义的噪点。
    */
   if (a.edge > 0.01 && level !== "domain") {
-    drawCitationParticles(ctx, scene, p, fx, fy, anim, time, level);
+    drawCitationParticles(ctx, scene, p, fx, fy, anim, time, level, a.edge);
   }
 
   // ---------- 5b. 语义关系的文字 ----------
@@ -866,6 +884,8 @@ function drawCitationParticles(
   anim: AnimState,
   time: number,
   level: ViewLevel,
+  /** 边在缩放档位上的可见度:粒子必须跟着边一起淡入淡出 */
+  edgeAlpha: number,
 ): void {
   /**
    * 粒子常驻,不再等选中才出现。
@@ -966,7 +986,7 @@ function drawCitationParticles(
       if (glow > 0.02) {
         // 位置只轻微影响光晕(最低保留 60%):有没有光晕由边的明暗决定,
         // 不该由粒子此刻跑到哪儿决定
-        const glowA = (0.6 + 0.4 * posFade) * glow;
+        const glowA = (0.6 + 0.4 * posFade) * glow * edgeAlpha;
         const g = ctx.createRadialGradient(px, py, 0, px, py, r * 4.4);
         g.addColorStop(0, hexA(p.accent, Math.min(1, 1.35 * glowA)));
         g.addColorStop(0.45, hexA(p.accent, Math.min(1, 0.4 * glowA)));
@@ -977,7 +997,7 @@ function drawCitationParticles(
         ctx.fill();
       }
 
-      ctx.globalAlpha = Math.min(1, (0.62 + 0.33 * glow) * strength);
+      ctx.globalAlpha = Math.min(1, (0.62 + 0.33 * glow) * strength) * edgeAlpha;
       ctx.fillStyle = glow > 0.5 ? p.ink : p.ink2;
       ctx.beginPath();
       ctx.arc(px, py, r * 0.55, 0, Math.PI * 2);
@@ -1167,14 +1187,6 @@ function drawLabels(
         ctx.fillStyle = p.ink3;
         ctx.fillText(d.labelEn.toUpperCase(), c.x, cy + 18);
       }
-
-      ctx.globalAlpha = 0.28 * a.domainLabel;
-      ctx.strokeStyle = p.ink3;
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(c.x - 26, cy + 28);
-      ctx.lineTo(c.x + 26, cy + 28);
-      ctx.stroke();
     }
   }
 

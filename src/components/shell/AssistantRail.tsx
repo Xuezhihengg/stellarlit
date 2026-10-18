@@ -17,7 +17,7 @@ interface AssistantRailProps {
 }
 
 /**
- * 右侧研究助手栏。
+ * 右侧观星台。
  *
  * 全站只有这一个侧栏,没有标签页。原因是这四种内容
  * (输入种子 / 确认候选 / 等待构建 / 查看论文)在时间上是**互斥**的,
@@ -74,11 +74,11 @@ export function AssistantRail({
         pointerEvents: collapsed ? "none" : "auto",
         transitionTimingFunction: "var(--ease-out)",
       }}
-      aria-label="研究助手"
+      aria-label="观星台"
     >
       <header className="flex items-center justify-between border-b border-hair px-6 py-5">
         <div className="flex items-baseline gap-2">
-          <h1 className="text-[12px] tracking-[0.1em] text-ink">AI 研究助手</h1>
+          <h1 className="text-[12px] tracking-[0.1em] text-ink">观星台</h1>
           <span className="font-mono text-[9.5px] tracking-[0.1em] text-ink-4 uppercase">
             OpenAlex · arXiv
           </span>
@@ -171,9 +171,6 @@ export function AssistantRail({
                   命中缓存 {payload.meta.relations.cacheHits} 对
                 </span>
               ) : null}
-              {payload.meta.relations.rejectedQuotes > 0 ? (
-                <span>{payload.meta.relations.rejectedQuotes} 条引用被核验拦下</span>
-              ) : null}
             </div>
           </div>
         </footer>
@@ -193,7 +190,7 @@ export function AssistantRail({
       <button
         type="button"
         onClick={onToggleCollapse}
-        aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
+        aria-label={collapsed ? "展开观星台" : "收起观星台"}
         aria-expanded={!collapsed}
         className="group fixed top-1/2 z-40 grid h-[38px] w-[38px] place-items-center rounded-full border border-hair-2 bg-bg/90 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md hover:border-ink-4 hover:bg-bg hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/45"
         style={{
@@ -216,7 +213,7 @@ export function AssistantRail({
           aria-hidden="true"
           className="pointer-events-none absolute right-full mr-3 translate-x-1 whitespace-nowrap rounded-md border border-hair-2 bg-bg/92 px-2.5 py-1 text-[10.5px] tracking-[0.04em] text-ink-2 opacity-0 shadow-[0_8px_22px_-12px_rgba(0,0,0,0.85)] backdrop-blur-md transition-[opacity,transform] duration-[var(--dur-fast)] group-hover:translate-x-0 group-hover:opacity-100 group-focus-visible:translate-x-0 group-focus-visible:opacity-100"
         >
-          {collapsed ? "展开研究助手" : "收起研究助手"}
+          {collapsed ? "展开观星台" : "收起观星台"}
         </span>
 
         {/* 图标自己再吃一层悬停/按压缩放:位移归按钮,手感归图标 */}

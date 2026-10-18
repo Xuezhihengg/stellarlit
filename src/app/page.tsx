@@ -109,13 +109,6 @@ export default function StarfieldPage() {
       <TopBar
         brand={<BrandMark />}
         title={lastSeed?.kind === "paper" ? lastSeed.title : "还没有星空"}
-        meta={
-          payload
-            ? `${payload.starfield.seeds.length} 篇种子 · 最近并入`
-            : query
-              ? "确认候选中"
-              : "等待输入种子论文"
-        }
         search={
           <SeedSearch
             value={query}

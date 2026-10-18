@@ -76,6 +76,7 @@ export function SeedSearch({
         </svg>
       ) : null}
       <input
+        id="seed-search"
         ref={inputRef}
         value={value}
         onChange={(e) => onChange(e.target.value)}

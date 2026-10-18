@@ -5,7 +5,12 @@ interface TopBarProps {
   brand?: ReactNode;
   /** 中:当前星空的标题(用户输入的那篇种子论文)。 */
   title?: string;
-  /** 中:标题右侧的补充信息,例如论文年份。 */
+  /**
+   * 旧版的标题副行(如"N 篇种子 · 最近并入")。
+   *
+   * 设计上已经不再显示;保留这个可选字段只是为了让历史副本(如
+   * 仓库里的 `page 2.tsx`)继续通过类型检查,不参与渲染。
+   */
   meta?: string;
   /** 中:标题下方的种子输入框(全局操作,不放在侧栏里) */
   search?: ReactNode;
@@ -21,7 +26,7 @@ interface TopBarProps {
  * 刻意不做导航菜单 —— 一个应用的导航如果是"首页/收藏/设置"，
  * 说明它的核心不是这张图。设置与历史收进右侧的状态区。
  */
-export function TopBar({ brand, title, meta, search, right, rightInset = 0 }: TopBarProps) {
+export function TopBar({ brand, title, search, right, rightInset = 0 }: TopBarProps) {
   /**
    * 让开侧栏的距离必须**和侧栏本身一样快**。
    *
@@ -36,28 +41,27 @@ export function TopBar({ brand, title, meta, search, right, rightInset = 0 }: To
       <div className="pointer-events-auto min-w-[180px] shrink-0">{brand}</div>
 
       {/*
-        大标题与种子输入**合成一个控件**。
+        标题默认"裸"在星空上;指针移上去,背景淡入、输入框一起展开。
 
-        之前是"一行标题 + 一个独立的输入框":两块各自有边界,看起来像
-        两个东西叠在一起。现在共用一层圆角底、一条细分割线:
-        上半是"现在看的是哪片星空",下半是"并入新的种子",聚焦时整块
-        一起亮边框 —— 读起来是一个"星图标题栏"。
+        为什么用 hover + focus-within 两个条件:鼠标移开时应该收起,
+        但如果用户正在输入(或按 ⌘K 聚焦),焦点在输入框里,它必须继续开着 ——
+        否则打字打到一半面板缩回去,是比"隐藏"更糟的交互。
+
+        标题本身是 <label>:点标题就能聚焦输入框,不用先悬停再瞄准输入框。
       */}
-      <div className="pointer-events-auto flex min-w-0 max-w-[560px] flex-1 flex-col rounded-xl border border-hair bg-bg/45 px-4 pt-2.5 pb-1 backdrop-blur-md transition-colors duration-[var(--dur-fast)] focus-within:border-accent/35">
-        <div className="flex w-full min-w-0 items-baseline justify-center gap-2">
-          <div className="min-w-0 truncate text-center text-[15px] text-ink">
+      <div className="group pointer-events-auto flex min-w-0 max-w-[560px] flex-1 flex-col rounded-xl border border-transparent px-4 py-1.5 transition-[background-color,border-color,box-shadow] duration-[var(--dur-base)] hover:border-hair hover:bg-bg/55 hover:shadow-[0_18px_44px_-30px_rgba(0,0,0,0.9)] focus-within:border-accent/35 focus-within:bg-bg/55">
+        <label htmlFor="seed-search" className="flex w-full min-w-0 cursor-text items-baseline justify-center">
+          <span className="min-w-0 truncate text-center text-[15px] text-ink">
             {title ?? "还没有星空"}
+          </span>
+        </label>
+
+        <div className="max-h-0 overflow-hidden opacity-0 transition-[max-height,opacity] duration-[var(--dur-base)] group-hover:max-h-14 group-hover:opacity-100 group-focus-within:max-h-14 group-focus-within:opacity-100">
+          <div className="pt-1">
+            <div className="h-px bg-hair" />
+            {search ? <div className="w-full pt-1">{search}</div> : null}
           </div>
-          {meta ? (
-            <div className="shrink-0 font-mono text-[9.5px] tracking-[0.12em] text-ink-4">
-              {meta}
-            </div>
-          ) : null}
         </div>
-        <div className="my-1 h-px bg-hair" />
-        {search ? (
-          <div className="w-full">{search}</div>
-        ) : null}
       </div>
 
       <div className="pointer-events-auto flex shrink-0 items-center justify-end gap-4">

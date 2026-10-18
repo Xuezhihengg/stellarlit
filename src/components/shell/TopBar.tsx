@@ -31,11 +31,11 @@ export function TopBar({ brand, title, meta, right, rightInset = 0 }: TopBarProp
       className="pointer-events-none fixed top-0 left-0 z-30 flex items-start justify-between gap-6 py-7 pr-9 pl-9"
       style={{ right: rightInset, transition: "right var(--dur-slow) var(--ease-out)" }}
     >
-      <div className="pointer-events-auto min-w-[180px]">{brand}</div>
+      <div className="pointer-events-auto min-w-[180px] shrink-0">{brand}</div>
 
       {title ? (
-        <div className="pointer-events-auto hidden max-w-[560px] flex-col items-center md:flex">
-          <div className="truncate text-[15px] text-ink">{title}</div>
+        <div className="pointer-events-auto hidden min-w-0 max-w-[560px] flex-1 flex-col items-center md:flex">
+          <div className="w-full truncate text-center text-[15px] text-ink">{title}</div>
           {meta ? (
             <div className="mt-1 font-mono text-[10px] tracking-[0.18em] text-ink-4 uppercase">
               {meta}
@@ -44,7 +44,7 @@ export function TopBar({ brand, title, meta, right, rightInset = 0 }: TopBarProp
         </div>
       ) : null}
 
-      <div className="pointer-events-auto flex min-w-[180px] items-center justify-end gap-4">
+      <div className="pointer-events-auto flex shrink-0 items-center justify-end gap-4">
         {right}
       </div>
     </header>

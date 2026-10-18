@@ -820,13 +820,10 @@ function drawEdgeLabels(
 
     /**
      * 没有底衬:文字直接浮在边上。
-     * 底衬虽然好读,但它把每条边都变成一个"胶囊",亲密感全丢了 ——
-     * 现在靠加粗一点点字重和轻微的暗色描边保证在密集处的可读性。
+     * 也不描边:描边会在文字外面多出一圈"白边/黑边",放大后尤其明显,
+     * 看起来像贴纸。密集处靠颜色与透明度区分就够了。
      */
     ctx.globalAlpha = ease * (level === "paper" ? 0.95 : 0.6);
-    ctx.lineWidth = 2.6;
-    ctx.strokeStyle = hexA(p.bg, 0.72);
-    ctx.strokeText(e.label, mx, my);
     ctx.fillStyle = toneOf(e.tone, p);
     ctx.fillText(e.label, mx, my);
   }

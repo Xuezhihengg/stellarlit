@@ -93,6 +93,8 @@ export default function StarfieldPage() {
         rightInset={collapsed ? 0 : RAIL_WIDTH}
         focus={focus}
         onSelect={setSelected}
+        // 双击星星 = "我要看这篇的详情":侧栏收着就顺手打开
+        onStarDoubleClick={() => setCollapsed(false)}
         onViewLevelChange={setLevel}
       />
 

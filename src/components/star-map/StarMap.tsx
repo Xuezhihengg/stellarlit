@@ -40,6 +40,8 @@ interface StarMapProps {
   /** 外部要求把镜头对准某篇论文。nonce 变化即触发,避免同一目标重复聚焦。 */
   focus?: { id: string; nonce: number } | null;
   onSelect: (id: string | null) => void;
+  /** 双击某颗星(用于"双击即打开详情侧栏") */
+  onStarDoubleClick?: (id: string) => void;
   onViewLevelChange?: (level: ViewLevel) => void;
 }
 
@@ -69,6 +71,7 @@ export function StarMap({
   rightInset = 0,
   focus = null,
   onSelect,
+  onStarDoubleClick,
   onViewLevelChange,
 }: StarMapProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -77,6 +80,12 @@ export function StarMap({
   const cameraRef = useRef<Camera>({ ...DEFAULT_CAMERA });
   const targetRef = useRef<Camera>({ ...DEFAULT_CAMERA });
   const hoverRef = useRef<HoverState>({ id: null, screenX: 0, screenY: 0 });
+  /**
+   * 事件监听只挂一次;回调走 ref,父组件每次渲染换个箭头函数也不会
+   * 把整组指针监听重新注册一遍。
+   */
+  const onStarDoubleClickRef = useRef(onStarDoubleClick);
+  onStarDoubleClickRef.current = onStarDoubleClick;
   const sizeRef = useRef({ w: 0, h: 0, dpr: 1 });
   /** 画布尺寸还没测出来时的待办自适应,由首帧补上 */
   const pendingFitRef = useRef<Scene | null>(null);
@@ -325,6 +334,7 @@ export function StarMap({
       const world = screenToWorld(cameraRef.current, w, h, pt);
       const hit = hitTest(scene, world.x, world.y, cameraRef.current.scale);
       if (!hit) return;
+      onStarDoubleClickRef.current?.(hit.id);
       // 双击聚焦:推近到论文层级,并把星体移到屏幕中心
       targetRef.current = { x: hit.x, y: hit.y, scale: clampScale(Math.max(1.5, cameraRef.current.scale * 2.2)) };
     };

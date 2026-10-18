@@ -6,7 +6,6 @@ import { AskPanel } from "@/components/shell/AskPanel";
 import { BuildStatus } from "@/components/shell/BuildStatus";
 import { PaperDetail } from "@/components/shell/PaperDetail";
 import { SeedConfirm } from "@/components/shell/SeedConfirm";
-import { SeedSearch } from "@/components/shell/SeedSearch";
 import { useStarfieldStore } from "@/stores/starfield-store";
 
 interface AssistantRailProps {
@@ -34,13 +33,9 @@ export function AssistantRail({
   const payload = useStarfieldStore((s) => s.payload);
   const phase = useStarfieldStore((s) => s.phase);
   const candidates = useStarfieldStore((s) => s.candidates);
-  const query = useStarfieldStore((s) => s.query);
   const error = useStarfieldStore((s) => s.error);
   const selectedId = useStarfieldStore((s) => s.selectedId);
-  const capabilities = useStarfieldStore((s) => s.capabilities);
   const streamProgress = useStarfieldStore((s) => s.streamProgress);
-  const setQuery = useStarfieldStore((s) => s.setQuery);
-  const search = useStarfieldStore((s) => s.search);
   const grow = useStarfieldStore((s) => s.grow);
   const dismissCandidates = useStarfieldStore((s) => s.dismissCandidates);
 
@@ -50,7 +45,6 @@ export function AssistantRail({
     return node?.kind === "paper" ? node : null;
   }, [payload, selectedId]);
 
-  const busy = phase === "resolving" || phase === "growing";
   const [tab, setTab] = useState<"detail" | "ask">("detail");
 
   return (
@@ -122,39 +116,13 @@ export function AssistantRail({
             RAG 问答
           </button>
         </div>
-
-        <div className="flex shrink-0 items-center gap-2">
-          {capabilities ? (
-            <span
-              title={
-                capabilities.llm
-                  ? `已连接 ${capabilities.llmModel ?? "大模型"}`
-                  : "未配置大模型密钥:关系判定将使用启发式规则,并在结果里如实标注"
-              }
-              className={`rounded-full border px-1.5 py-px text-[9.5px] ${
-                capabilities.llm ? "border-accent/40 text-accent" : "border-warm/40 text-warm"
-              }`}
-            >
-              {capabilities.llm ? "模型已连接" : "启发式模式"}
-            </span>
-          ) : null}
-        </div>
       </header>
 
       <div className="relative min-h-0 flex-1">
         {/* 观星台:保留在 DOM 里(只是隐藏),切换标签不会丢掉展开态与滚动位置 */}
-        <div className={`h-full flex-col ${tab === "detail" ? "flex" : "hidden"}`}>
-          <div className="border-b border-hair px-6 py-4">
-            <SeedSearch
-              value={query}
-              busy={busy}
-              growing={Boolean(payload)}
-              onChange={setQuery}
-              onSubmit={() => void search()}
-            />
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+        <div
+          className={`h-full overflow-y-auto px-6 py-5 ${tab === "detail" ? "block" : "hidden"}`}
+        >
             {/* 额度是全局状态,由页面上的 QuotaNotice 显示;侧栏只留"这次操作"的错误 */}
             {error && error.code !== "quota" ? (
               <div className="mb-4 rounded-lg border border-alert/30 px-3 py-2.5">
@@ -193,7 +161,6 @@ export function AssistantRail({
             ) : (
               <EmptyState hasPayload={Boolean(payload)} />
             )}
-          </div>
         </div>
 
         {/* 问答:同样保持挂载,切回观星台再回来时答案还在 */}
@@ -210,7 +177,7 @@ export function AssistantRail({
             />
           ) : (
             <p className="text-[11.5px] leading-relaxed text-ink-4">
-              先在「观星台」里输入一篇种子论文。问答只检索当前这片星空里的内容。
+              先在顶部输入一篇种子论文。问答只检索当前这片星空里的内容。
             </p>
           )}
         </div>
@@ -314,15 +281,15 @@ function EmptyState({ hasPayload }: { hasPayload: boolean }) {
     <div className="flex flex-col gap-5 pt-1">
       <p className="text-[12.5px] leading-[2] text-ink-2">
         {hasPayload
-          ? "点击任意星体查看它的论文详情与关系证据,或者在输入框里并入下一篇种子论文。"
-          : "输入一篇种子论文,星空会沿着它的研究脉络长出来 —— 引用是引力线,关系是行星。"}
+          ? "点击任意星体查看它的论文详情与关系证据;要并入下一篇种子,用顶部的输入框。"
+          : "在顶部输入一篇种子论文,星空会沿着它的研究脉络长出来 —— 引用是引力线,关系是行星。"}
       </p>
       <ul className="flex flex-col gap-2.5 border-t border-hair pt-5">
         {[
           ["滚轮", "缩放；拉远看领域星云,推近看论文星体"],
           ["拖拽", "平移整片星空"],
           ["双击星体", "聚焦并推近"],
-          ["⌘K", "跳到种子输入框"],
+          ["⌘K", "跳到顶部种子输入框"],
         ].map(([k, v]) => (
           <li key={k} className="flex items-baseline gap-3">
             <span className="w-[56px] shrink-0 rounded border border-hair-2 px-1.5 py-0.5 text-center font-mono text-[10px] text-ink-3">

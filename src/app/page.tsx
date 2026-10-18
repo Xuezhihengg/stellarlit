@@ -8,6 +8,7 @@ import { BottomBar } from "@/components/shell/BottomBar";
 import { BrandMark } from "@/components/shell/BrandMark";
 import { QuotaNotice } from "@/components/shell/QuotaNotice";
 import { RelationLegend } from "@/components/shell/RelationLegend";
+import { SeedSearch } from "@/components/shell/SeedSearch";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
 import { TopBar } from "@/components/shell/TopBar";
 import { Metric } from "@/components/ui/Metric";
@@ -36,6 +37,8 @@ export default function StarfieldPage() {
   const minYear = useStarfieldStore((s) => s.minYear);
   const phase = useStarfieldStore((s) => s.phase);
   const query = useStarfieldStore((s) => s.query);
+  const setQuery = useStarfieldStore((s) => s.setQuery);
+  const search = useStarfieldStore((s) => s.search);
   const setSelected = useStarfieldStore((s) => s.setSelected);
   const toggleKind = useStarfieldStore((s) => s.toggleKind);
   const setMinYear = useStarfieldStore((s) => s.setMinYear);
@@ -113,10 +116,20 @@ export default function StarfieldPage() {
               ? "确认候选中"
               : "等待输入种子论文"
         }
+        search={
+          <SeedSearch
+            value={query}
+            busy={phase === "resolving" || phase === "growing"}
+            growing={Boolean(payload)}
+            onChange={setQuery}
+            onSubmit={() => void search()}
+          />
+        }
         right={
           <>
+            {/* 指标是次要信息:窄屏让位给大标题与输入框 */}
             {payload ? (
-              <div className="hidden items-center gap-4 lg:flex">
+              <div className="hidden items-center gap-4 min-[1400px]:flex">
                 <Metric label="篇论文" value={payload.graph.stats.papers} />
                 <Metric label="条关系" value={payload.graph.stats.byLayer.semantic} />
                 <Metric label="个前沿" value={payload.graph.stats.communities} />

@@ -62,7 +62,7 @@ export function AssistantRail({
        * 浮窗让星图完整地铺满整屏,面板像一张浮在星空上的纸 ——
        * 这更贴合"星图是主角、助手是旁白"的关系。
        */
-      className="pointer-events-auto fixed top-4 right-4 bottom-4 z-30 flex flex-col overflow-hidden rounded-2xl border border-hair-2 bg-bg/78 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.85)] backdrop-blur-xl transition-[transform,opacity] duration-[--dur-slow]"
+      className="pointer-events-auto fixed top-4 right-4 bottom-4 z-30 flex flex-col overflow-hidden rounded-2xl border border-hair-2 bg-bg/78 shadow-[0_24px_70px_-30px_rgba(0,0,0,0.85)] backdrop-blur-xl transition-[transform,opacity] duration-[var(--dur-slow)]"
       style={{
         width: 372,
         transformOrigin: "right center",
@@ -195,7 +195,7 @@ export function AssistantRail({
         onClick={onToggleCollapse}
         aria-label={collapsed ? "展开研究助手" : "收起研究助手"}
         aria-expanded={!collapsed}
-        className="group fixed top-1/2 z-40 grid h-9 w-9 place-items-center rounded-full border border-hair-2 bg-bg/85 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md transition-[right,color,background-color,border-color] duration-[--dur-base] hover:border-ink-4 hover:text-ink-2"
+        className="group fixed top-1/2 z-40 grid h-9 w-9 place-items-center rounded-full border border-hair-2 bg-bg/85 text-ink-3 shadow-[0_10px_28px_-14px_rgba(0,0,0,0.9)] backdrop-blur-md transition-[right,color,background-color,border-color] duration-[var(--dur-base)] hover:border-ink-4 hover:text-ink-2"
         style={{
           right: collapsed ? 18 : 384,
           transform: collapsed ? "translate(0, -50%)" : "translate(50%, -50%)",
@@ -207,7 +207,7 @@ export function AssistantRail({
           height="11"
           viewBox="0 0 10 10"
           aria-hidden="true"
-          className={`transition-transform duration-[--dur-base] ${collapsed ? "rotate-180" : ""}`}
+          className={`transition-transform duration-[var(--dur-base)] ${collapsed ? "rotate-180" : ""}`}
           style={{ transitionTimingFunction: "var(--ease-out)" }}
         >
           <path

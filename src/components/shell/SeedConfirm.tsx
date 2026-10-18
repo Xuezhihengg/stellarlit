@@ -36,7 +36,7 @@ export function SeedConfirm({ candidates, onPick, onDismiss }: SeedConfirmProps)
             <button
               type="button"
               onClick={() => onPick(c)}
-              className="group w-full rounded-lg border border-hair px-3 py-2.5 text-left transition-colors duration-[--dur-fast] hover:border-accent/40"
+              className="group w-full rounded-lg border border-hair px-3 py-2.5 text-left transition-colors duration-[var(--dur-fast)] hover:border-accent/40"
             >
               <div className="flex items-start justify-between gap-2">
                 <span className="line-clamp-2 text-[12.5px] leading-snug text-ink">{c.title}</span>

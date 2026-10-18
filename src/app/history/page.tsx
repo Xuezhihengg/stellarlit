@@ -85,7 +85,7 @@ export default function HistoryPage() {
           {items.map((s) => (
             <li
               key={s.id}
-              className="group flex items-center justify-between gap-6 rounded-xl border border-hair px-5 py-4 transition-colors duration-[--dur-fast] hover:border-hair-2"
+              className="group flex items-center justify-between gap-6 rounded-xl border border-hair px-5 py-4 transition-colors duration-[var(--dur-fast)] hover:border-hair-2"
             >
               <div className="min-w-0">
                 <Link

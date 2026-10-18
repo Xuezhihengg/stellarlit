@@ -29,7 +29,7 @@ export function GhostButton({
   return (
     <button
       type="button"
-      className={`rounded-full border ${pad} ${tone} font-normal tracking-[0.04em] whitespace-nowrap transition-colors duration-[--dur-fast] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+      className={`rounded-full border ${pad} ${tone} font-normal tracking-[0.04em] whitespace-nowrap transition-colors duration-[var(--dur-fast)] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
       {...rest}
     >
       {children}

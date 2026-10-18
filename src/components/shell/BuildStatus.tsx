@@ -39,7 +39,7 @@ export function BuildStatus({ label, step = 1, total = 4, detail }: BuildStatusP
         {Array.from({ length: total }, (_, i) => (
           <span
             key={i}
-            className={`h-px flex-1 transition-colors duration-[--dur-slow] ${
+            className={`h-px flex-1 transition-colors duration-[var(--dur-slow)] ${
               i < step ? "bg-accent/70" : "bg-hair-2"
             }`}
           />

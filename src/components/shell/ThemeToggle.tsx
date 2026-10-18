@@ -20,7 +20,7 @@ export function ThemeToggle({ theme, onToggle }: ThemeToggleProps) {
       onClick={onToggle}
       aria-label={theme === "dark" ? "切换到白天模式" : "切换到夜间模式"}
       title="切换主题(⌘J)"
-      className="grid h-7 w-7 place-items-center rounded-full text-ink-3 transition-colors duration-[--dur-base] hover:text-ink"
+      className="grid h-7 w-7 place-items-center rounded-full text-ink-3 transition-colors duration-[var(--dur-base)] hover:text-ink"
     >
       {theme === "dark" ? (
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">

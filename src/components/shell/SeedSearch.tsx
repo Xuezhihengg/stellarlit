@@ -62,12 +62,12 @@ export function SeedSearch({ value, busy, growing = false, onChange, onSubmit }:
         spellCheck={false}
         aria-label="种子论文"
         placeholder={`标题 / arXiv ID / DOI / OpenAlex ID,如 ${EXAMPLES[hintIndex]}`}
-        className="h-9 w-full rounded-lg border border-hair-2 bg-transparent pr-16 pl-3 text-[12.5px] text-ink transition-colors duration-[--dur-fast] placeholder:text-ink-4 focus:border-accent/45 disabled:opacity-50"
+        className="h-9 w-full rounded-lg border border-hair-2 bg-transparent pr-16 pl-3 text-[12.5px] text-ink transition-colors duration-[var(--dur-fast)] placeholder:text-ink-4 focus:border-accent/45 disabled:opacity-50"
       />
       <button
         type="submit"
         disabled={busy || !value.trim()}
-        className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] tracking-[0.06em] text-ink-3 transition-colors duration-[--dur-fast] hover:text-accent disabled:opacity-30"
+        className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] tracking-[0.06em] text-ink-3 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:opacity-30"
       >
         {busy ? "…" : growing ? "并入" : "解析"}
       </button>

@@ -68,7 +68,7 @@ export function RelationLegend({ payload, dimmedKinds, onToggle }: RelationLegen
             type="button"
             onClick={() => onToggle(kind)}
             title={p.description}
-            className={`group flex items-center gap-2 rounded-full border border-transparent px-2.5 py-[5px] transition-all duration-[--dur-fast] hover:border-hair-2 hover:bg-hair/40 ${
+            className={`group flex items-center gap-2 rounded-full border border-transparent px-2.5 py-[5px] transition-all duration-[var(--dur-fast)] hover:border-hair-2 hover:bg-hair/40 ${
               off ? "opacity-35" : "opacity-100"
             }`}
           >

@@ -50,7 +50,7 @@ export function AccountMenu() {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="账户与设置"
-        className={`relative grid h-8 w-8 place-items-center rounded-full border transition-colors duration-[--dur-fast] ${
+        className={`relative grid h-8 w-8 place-items-center rounded-full border transition-colors duration-[var(--dur-fast)] ${
           open ? "border-accent/45 text-accent" : "border-hair-2 text-ink-3 hover:text-ink-2"
         }`}
       >
@@ -135,7 +135,7 @@ function MenuLink({
       href={href}
       role="menuitem"
       onClick={onSelect}
-      className="flex items-center justify-between rounded-lg px-3 py-2 text-[12.5px] text-ink-2 transition-colors duration-[--dur-fast] hover:bg-hair hover:text-ink"
+      className="flex items-center justify-between rounded-lg px-3 py-2 text-[12.5px] text-ink-2 transition-colors duration-[var(--dur-fast)] hover:bg-hair hover:text-ink"
     >
       <span>{children}</span>
       <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true" className="text-ink-4">

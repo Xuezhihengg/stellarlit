@@ -60,7 +60,7 @@ export function BottomBar({
               type="button"
               onClick={() => onMinYearChange(null)}
               aria-pressed={minYear === null}
-              className={`pb-[7px] text-[10.5px] tracking-[0.16em] transition-colors duration-[--dur-fast] ${
+              className={`pb-[7px] text-[10.5px] tracking-[0.16em] transition-colors duration-[var(--dur-fast)] ${
                 minYear === null ? "text-ink-3 hover:text-ink-2" : "text-accent/80 hover:text-accent"
               }`}
             >
@@ -143,14 +143,14 @@ function Timeline({
             >
               {/* 刻度从轴线上垂下来 */}
               <span
-                className={`w-px transition-all duration-[--dur-fast] ${
+                className={`w-px transition-all duration-[var(--dur-fast)] ${
                   active
                     ? "h-[9px] bg-accent"
                     : "h-[6px] bg-ink-4 group-hover:h-[9px] group-hover:bg-ink-3"
                 }`}
               />
               <span
-                className={`mt-[7px] font-mono text-[10.5px] tracking-[0.04em] transition-colors duration-[--dur-fast] ${
+                className={`mt-[7px] font-mono text-[10.5px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
                   active ? "text-accent" : "text-ink-3 group-hover:text-ink-2"
                 }`}
               >

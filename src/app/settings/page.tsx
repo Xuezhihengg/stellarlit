@@ -335,7 +335,7 @@ function PresetCard({
             height="10"
             viewBox="0 0 10 10"
             aria-hidden="true"
-            className={`mt-2 shrink-0 text-ink-4 transition-transform duration-[--dur-fast] group-hover:text-ink-3 ${
+            className={`mt-2 shrink-0 text-ink-4 transition-transform duration-[var(--dur-fast)] group-hover:text-ink-3 ${
               open ? "rotate-90" : ""
             }`}
           >
@@ -386,7 +386,7 @@ function PresetCard({
                     key={n}
                     type="button"
                     onClick={() => onChange({ maxPerSeed: n })}
-                    className={`rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors duration-[--dur-fast] ${
+                    className={`rounded-md border px-2.5 py-1 font-mono text-[11px] transition-colors duration-[var(--dur-fast)] ${
                       preset.maxPerSeed === n
                         ? "border-accent/45 text-accent"
                         : "border-hair-2 text-ink-4 hover:text-ink-3"
@@ -479,12 +479,12 @@ function Switch({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative mt-0.5 h-[18px] w-[32px] shrink-0 rounded-full border transition-colors duration-[--dur-fast] ${
+      className={`relative mt-0.5 h-[18px] w-[32px] shrink-0 rounded-full border transition-colors duration-[var(--dur-fast)] ${
         checked ? "border-accent/50 bg-accent/25" : "border-hair-2 bg-transparent"
       }`}
     >
       <span
-        className={`absolute top-[2px] h-[12px] w-[12px] rounded-full transition-[left,background-color] duration-[--dur-fast] ${
+        className={`absolute top-[2px] h-[12px] w-[12px] rounded-full transition-[left,background-color] duration-[var(--dur-fast)] ${
           checked ? "left-[17px] bg-accent" : "left-[2px] bg-ink-4"
         }`}
       />

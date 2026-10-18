@@ -11,8 +11,9 @@
     "typecheck": "tsc --noEmit",
     "check:tokens": "tsx scripts/check-tokens.ts",
     "check:label": "tsx scripts/check-label-layout.ts",
+    "check:rag": "tsx scripts/check-rag.ts",
     "probe": "tsx --env-file=.env.local scripts/relation-probe.mts",
-    "check": "pnpm typecheck && pnpm lint && pnpm check:tokens && pnpm check:label"
+    "check": "pnpm typecheck && pnpm lint && pnpm check:tokens && pnpm check:label && pnpm check:rag"
   },
   "dependencies": {
     "next": "15.5.27",

@@ -14,6 +14,7 @@ import type {
   StarfieldPayload,
 } from "@/types/api";
 import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
+import type { AskEvent, AskRequest, AskSource } from "@/types/rag";
 import type { Starfield } from "@/types/starfield";
 
 /** 带可行动提示的错误。界面直接展示 message 与 hint。 */
@@ -243,4 +244,82 @@ export function listStarfields() {
 
 export function deleteStarfield(id: string) {
   return request<{ ok: true }>(`/api/starfield/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export interface AskHandlers {
+  onSources: (sources: AskSource[]) => void;
+  onDelta: (text: string) => void;
+  onDone: (citations: number[], fallback: boolean) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * 提问 —— 流式回答。
+ *
+ * 与构建星空的流不同,这里的每一帧都是给人读的:先给依据(sources),
+ * 再逐字给答案(delta)。解析逻辑和 grow 的 SSE 一样(空行分隔、`data: ` 前缀),
+ * 只是事件类型换成 AskEvent。
+ */
+export async function askStarfield(
+  req: AskRequest,
+  handlers: AskHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch("/api/ask", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(req),
+      signal,
+    });
+  } catch {
+    if (!signal?.aborted) handlers.onError("无法连接到服务端");
+    return;
+  }
+
+  if (!res.ok || !res.body) {
+    const err = (await res.json().catch(() => ({}))) as ApiError;
+    handlers.onError(err.error ?? `请求失败(${res.status})`);
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep = buffer.indexOf("\n\n");
+      while (sep >= 0) {
+        const frame = buffer.slice(0, sep);
+        buffer = buffer.slice(sep + 2);
+        sep = buffer.indexOf("\n\n");
+
+        const line = frame.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+
+        let event: AskEvent;
+        try {
+          event = JSON.parse(line.slice(6)) as AskEvent;
+        } catch {
+          continue;
+        }
+
+        if (event.type === "sources") handlers.onSources(event.sources);
+        else if (event.type === "delta") handlers.onDelta(event.text);
+        else if (event.type === "done") {
+          handlers.onDone(event.citations, Boolean(event.fallback));
+        } else if (event.type === "error") handlers.onError(event.message);
+      }
+    }
+  } catch {
+    if (!signal?.aborted) handlers.onError("回答中断,请重试");
+  } finally {
+    reader.releaseLock();
+  }
 }

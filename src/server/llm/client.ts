@@ -112,3 +112,96 @@ export async function chatJson<T>(
 
   return null;
 }
+
+export interface StreamChatOptions {
+  system: string;
+  user: string;
+  temperature?: number;
+  maxTokens?: number;
+  signal?: AbortSignal;
+}
+
+/**
+ * 流式文本生成 —— 给检索问答用。
+ *
+ * 与 chatJson 的分工:判定关系要的是**结构化且可校验**的结论,
+ * 所以走 JSON + schema;回答问题是给人读的长文本,逐字返回才有"在思考"的观感。
+ * 不可用或中途失败时返回已收到的部分与 ok=false,由上层决定是否降级。
+ */
+export async function streamChat(
+  opts: StreamChatOptions,
+  onDelta: (text: string) => void,
+): Promise<{ text: string; ok: boolean }> {
+  if (!serverConfig.llm.enabled) return { text: "", ok: false };
+
+  const { system, user, temperature = 0.3, maxTokens = 1200, signal } = opts;
+  const ac = new AbortController();
+  const onAbort = () => ac.abort();
+  signal?.addEventListener("abort", onAbort);
+  const timer = setTimeout(() => ac.abort(), 90_000);
+
+  let text = "";
+  try {
+    const res = await fetch(`${serverConfig.llm.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${serverConfig.llm.apiKey ?? ""}`,
+      },
+      body: JSON.stringify({
+        model: serverConfig.llm.model,
+        temperature,
+        max_tokens: maxTokens,
+        stream: true,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }),
+      signal: ac.signal,
+    });
+
+    if (!res.ok || !res.body) throw new UpstreamError(`LLM HTTP ${res.status}`, "llm");
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sep = buffer.indexOf("\n");
+      while (sep >= 0) {
+        const line = buffer.slice(0, sep).trim();
+        buffer = buffer.slice(sep + 1);
+        sep = buffer.indexOf("\n");
+
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+
+        try {
+          const event = JSON.parse(payload) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const delta = event.choices?.[0]?.delta?.content;
+          if (delta) {
+            text += delta;
+            onDelta(delta);
+          }
+        } catch {
+          // 半截帧:等下一块
+        }
+      }
+    }
+
+    return { text, ok: true };
+  } catch {
+    return { text, ok: false };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+  }
+}

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { Collapsible } from "@/components/ui/Collapsible";
+import { edgeKindLabel } from "@/lib/graph/edge-labels";
 import type { StarfieldPayload } from "@/types/api";
 import type { Evidence, GraphEdge, PaperNode } from "@/types/kg";
 
@@ -64,8 +65,7 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
 
   const presetLabel = (kind: string): string =>
     payload.presets.find((p) => p.id.toLowerCase() === kind.toLowerCase())?.label ??
-    KIND_LABEL[kind] ??
-    kind;
+    edgeKindLabel(kind);
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -376,19 +376,6 @@ function EvidenceCard({ evidence }: { evidence: Evidence }) {
     </li>
   );
 }
-
-const KIND_LABEL: Record<string, string> = {
-  CITES: "引用",
-  BASELINE_OF: "基线",
-  CONTEMPORARY_OF: "同期",
-  SIMILAR_APPROACH: "思路类似",
-  ALTERNATIVE_TO: "同任务异方法",
-  EXTENDS: "扩展",
-  CONTRADICTS: "结论矛盾",
-  MENTIONS: "提及",
-  SEMANTIC_NEIGHBOR: "语义近邻",
-  POTENTIAL_LINK: "潜在连接",
-};
 
 function toneOfKind(kind: string): string {
   switch (kind) {

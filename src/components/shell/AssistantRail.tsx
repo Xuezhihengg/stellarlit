@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 
+import { AskPanel } from "@/components/shell/AskPanel";
 import { BuildStatus } from "@/components/shell/BuildStatus";
 import { PaperDetail } from "@/components/shell/PaperDetail";
 import { SeedConfirm } from "@/components/shell/SeedConfirm";
@@ -111,6 +112,12 @@ export function AssistantRail({
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-5">
+        {payload ? (
+          <div className="mb-4">
+            <AskPanel payload={payload} onFocusPaper={onFocusPaper} />
+          </div>
+        ) : null}
+
         {/* 额度是全局状态,由页面上的 QuotaNotice 显示;侧栏只留"这次操作"的错误 */}
         {error && error.code !== "quota" ? (
           <div className="mb-4 rounded-lg border border-alert/30 px-3 py-2.5">

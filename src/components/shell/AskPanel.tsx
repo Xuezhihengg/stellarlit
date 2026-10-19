@@ -4,12 +4,14 @@ import { useRef, useState } from "react";
 
 import { askStarfield } from "@/lib/api/client";
 import type { StarfieldPayload } from "@/types/api";
-import type { AskSource } from "@/types/rag";
+import type { AskSource, AskSuggestion } from "@/types/rag";
 
 interface AskPanelProps {
   payload: StarfieldPayload;
   /** 点依据:单篇就聚焦单篇,关系卡则把两篇一起放进镜头 */
   onFocusSource: (source: AskSource) => void;
+  /** 把回答里发现的新论文交给"解析 → 用户确认 → 并入"的既有流程 */
+  onAddPaper: (title: string) => void;
 }
 
 const SUGGESTIONS = [
@@ -25,11 +27,12 @@ const SUGGESTIONS = [
  * 所以用户在看到第一句回答之前就知道"它查了哪些论文、哪些段落"——
  * 这让回答从"模型说的"变成"有出处的"。
  */
-export function AskPanel({ payload, onFocusSource }: AskPanelProps) {
+export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<AskSource[]>([]);
   const [citations, setCitations] = useState<number[]>([]);
+  const [suggestions, setSuggestions] = useState<AskSuggestion[]>([]);
   const [busy, setBusy] = useState(false);
   const [fallback, setFallback] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +50,7 @@ export function AskPanel({ payload, onFocusSource }: AskPanelProps) {
     setAnswer("");
     setSources([]);
     setCitations([]);
+    setSuggestions([]);
     setFallback(false);
     setError(null);
 
@@ -55,9 +59,10 @@ export function AskPanel({ payload, onFocusSource }: AskPanelProps) {
       {
         onSources: setSources,
         onDelta: (delta) => setAnswer((prev) => prev + delta),
-        onDone: (cited, isFallback) => {
+        onDone: (cited, isFallback, found) => {
           setCitations(cited);
           setFallback(isFallback);
+          setSuggestions(found);
           setBusy(false);
         },
         onError: (message) => {
@@ -174,6 +179,43 @@ export function AskPanel({ payload, onFocusSource }: AskPanelProps) {
                 </li>
               ))}
             </ul>
+          ) : null}
+
+          {suggestions.length ? (
+            <div className="mt-3 border-t border-hair pt-2.5">
+              <p className="m-0 text-[10px] tracking-[0.1em] text-ink-4">
+                回答里提到、星空里还没有的论文 · 确认后加入
+              </p>
+              <ul className="mt-1.5 flex flex-col gap-1">
+                {suggestions.map((s) => (
+                  <li
+                    key={`${s.title}-${s.year ?? ""}`}
+                    className="flex items-start justify-between gap-2 rounded-md bg-hair/20 px-2 py-1.5"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[10.5px] leading-snug text-ink-2">
+                        {s.title}
+                        {s.year ? (
+                          <span className="ml-1.5 font-mono text-[9.5px] text-ink-4">
+                            {s.year}
+                          </span>
+                        ) : null}
+                      </p>
+                      {s.reason ? (
+                        <p className="mt-0.5 line-clamp-1 text-[9.5px] text-ink-4">{s.reason}</p>
+                      ) : null}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onAddPaper(s.title)}
+                      className="shrink-0 rounded-md border border-hair-2 px-1.5 py-0.5 text-[9.5px] text-accent transition-colors duration-[var(--dur-fast)] hover:border-accent/40 hover:text-accent/80"
+                    >
+                      加入星空
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
           ) : null}
         </div>
       ) : null}

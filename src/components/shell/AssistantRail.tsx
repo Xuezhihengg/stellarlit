@@ -39,6 +39,8 @@ export function AssistantRail({
   const error = useStarfieldStore((s) => s.error);
   const selectedId = useStarfieldStore((s) => s.selectedId);
   const streamProgress = useStarfieldStore((s) => s.streamProgress);
+  const setQuery = useStarfieldStore((s) => s.setQuery);
+  const search = useStarfieldStore((s) => s.search);
   const grow = useStarfieldStore((s) => s.grow);
   const dismissCandidates = useStarfieldStore((s) => s.dismissCandidates);
 
@@ -188,6 +190,12 @@ export function AssistantRail({
             <AskPanel
               payload={payload}
               onFocusSource={(source) => onFocusPapers?.(source.paperIds)}
+              onAddPaper={(title) => {
+                // 复用"解析 → 候选确认 → 并入"的既有流程,最终是否加入由用户点选
+                setQuery(title);
+                void search();
+                setTab("detail");
+              }}
             />
           ) : (
             <p className="text-[11.5px] leading-relaxed text-ink-4">

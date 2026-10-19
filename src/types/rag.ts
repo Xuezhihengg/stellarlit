@@ -18,8 +18,20 @@ export interface AskSource {
   quote: string;
 }
 
+/** 回答里提到、但当前星空还没有的论文;是否加入由用户确认。 */
+export interface AskSuggestion {
+  title: string;
+  year?: number;
+  reason?: string;
+}
+
 export type AskEvent =
   | { type: "sources"; sources: AskSource[] }
   | { type: "delta"; text: string }
-  | { type: "done"; citations: number[]; fallback?: boolean }
+  | {
+      type: "done";
+      citations: number[];
+      fallback?: boolean;
+      suggestions?: AskSuggestion[];
+    }
   | { type: "error"; message: string };

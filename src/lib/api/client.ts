@@ -14,7 +14,7 @@ import type {
   StarfieldPayload,
 } from "@/types/api";
 import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
-import type { AskEvent, AskRequest, AskSource } from "@/types/rag";
+import type { AskEvent, AskRequest, AskSource, AskSuggestion } from "@/types/rag";
 import type { Starfield } from "@/types/starfield";
 
 /** 带可行动提示的错误。界面直接展示 message 与 hint。 */
@@ -249,7 +249,11 @@ export function deleteStarfield(id: string) {
 export interface AskHandlers {
   onSources: (sources: AskSource[]) => void;
   onDelta: (text: string) => void;
-  onDone: (citations: number[], fallback: boolean) => void;
+  onDone: (
+    citations: number[],
+    fallback: boolean,
+    suggestions: AskSuggestion[],
+  ) => void;
   onError: (message: string) => void;
 }
 
@@ -313,7 +317,7 @@ export async function askStarfield(
         if (event.type === "sources") handlers.onSources(event.sources);
         else if (event.type === "delta") handlers.onDelta(event.text);
         else if (event.type === "done") {
-          handlers.onDone(event.citations, Boolean(event.fallback));
+          handlers.onDone(event.citations, Boolean(event.fallback), event.suggestions ?? []);
         } else if (event.type === "error") handlers.onError(event.message);
       }
     }

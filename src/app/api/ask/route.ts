@@ -6,6 +6,7 @@ import {
   ASK_SYSTEM,
   buildAskPrompt,
   citedNumbers,
+  extractSuggestions,
   extractiveAnswer,
 } from "@/server/rag/answer";
 import { retrieveSources } from "@/server/rag/retrieve";
@@ -97,7 +98,21 @@ export async function POST(req: Request): Promise<Response> {
         send({ type: "delta", text: fallback });
         send({ type: "done", citations: citedNumbers(fallback, sources.length), fallback: true });
       } else {
-        send({ type: "done", citations: citedNumbers(result.text, sources.length) });
+        /**
+         * 从回答里整理"提到但不在星空里"的论文。
+         *
+         * 放在 done 之前:前端拿到 done 就能一次把角标与候选论文都画出来,
+         * 不会出现"回答完了,卡片过两秒才冒出来"的二次跳变。
+         */
+        const existingTitles = payload.graph.nodes
+          .filter((n) => n.kind === "paper")
+          .map((n) => n.title);
+        const suggestions = await extractSuggestions(question, result.text, existingTitles);
+        send({
+          type: "done",
+          citations: citedNumbers(result.text, sources.length),
+          suggestions,
+        });
       }
 
       closed = true;

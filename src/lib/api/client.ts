@@ -246,6 +246,14 @@ export function deleteStarfield(id: string) {
   return request<{ ok: true }>(`/api/starfield/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+/** 摘要翻译(目标语言由服务端按原文语言判断)。 */
+export function translateText(text: string): Promise<{ text: string }> {
+  return request<{ text: string }>("/api/translate", {
+    method: "POST",
+    body: JSON.stringify({ text }),
+  });
+}
+
 export interface AskHandlers {
   onSources: (sources: AskSource[]) => void;
   onDelta: (text: string) => void;

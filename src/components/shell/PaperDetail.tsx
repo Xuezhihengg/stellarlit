@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Collapsible } from "@/components/ui/Collapsible";
+import { translateText } from "@/lib/api/client";
 import { edgeKindLabel } from "@/lib/graph/edge-labels";
 import type { StarfieldPayload } from "@/types/api";
 import type { Evidence, GraphEdge, PaperNode } from "@/types/kg";
@@ -22,15 +23,46 @@ interface PaperDetailProps {
  */
 export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) {
   const [openEdge, setOpenEdge] = useState<string | null>(null);
-  const [abstractOpen, setAbstractOpen] = useState(false);
+  const [abstractOpen, setAbstractOpen] = useState(true);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+  const [translation, setTranslation] = useState<string | null>(null);
+  const [translating, setTranslating] = useState(false);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+  /** 翻译是异步的:换论文后旧请求回来,不能把译文贴到新论文上 */
+  const paperIdRef = useRef(paper.id);
+  paperIdRef.current = paper.id;
 
-  // 换一篇论文,所有展开态回到默认:摘要收起、分组全收
+  // 换一篇论文:摘要默认展开(读者先看到内容),关系分组收起,译文清空
   useEffect(() => {
     setOpenEdge(null);
-    setAbstractOpen(false);
+    setAbstractOpen(true);
     setOpenGroup(null);
+    setTranslation(null);
+    setTranslateError(null);
+    setTranslating(false);
   }, [paper.id]);
+
+  const translate = async () => {
+    if (!paper.abstract || translating) return;
+    if (translation) {
+      setTranslation(null);
+      return;
+    }
+    setTranslating(true);
+    setTranslateError(null);
+    const requestedFor = paper.id;
+    try {
+      const res = await translateText(paper.abstract);
+      if (paperIdRef.current !== requestedFor) return;
+      setTranslation(res.text);
+    } catch (e) {
+      if (paperIdRef.current !== requestedFor) return;
+      setTranslateError(e instanceof Error ? e.message : "翻译失败,请稍后重试");
+    } finally {
+      // 上一篇请求收尾时不能解除当前论文的加载态,否则会允许重复提交
+      if (paperIdRef.current === requestedFor) setTranslating(false);
+    }
+  };
 
   const paperById = new Map(
     payload.graph.nodes.filter((n) => n.kind === "paper").map((n) => [n.id, n]),
@@ -129,6 +161,35 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
           >
             <Collapsible open={abstractOpen} collapsedHeight={96}>
               <p className="text-[12px] leading-[1.75] text-ink-2">{paper.abstract}</p>
+              <div className="mt-2 flex justify-end">
+                <button
+                  type="button"
+                  onClick={() => void translate()}
+                  disabled={translating}
+                  aria-busy={translating}
+                  tabIndex={abstractOpen ? 0 : -1}
+                  className="rounded-md px-1.5 py-0.5 text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:opacity-50"
+                >
+                  {translating ? "翻译中…" : translation ? "隐藏译文" : "翻译"}
+                </button>
+              </div>
+              {translation ? (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  className="mt-1 rounded-md border-l-2 border-accent/40 bg-hair/30 py-2 pr-2 pl-2.5"
+                >
+                  <div className="font-mono text-[9px] tracking-[0.1em] text-ink-4">译文</div>
+                  <p className="mt-1 text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2">
+                    {translation}
+                  </p>
+                </div>
+              ) : null}
+              {translateError ? (
+                <p role="alert" className="mt-1 text-[10.5px] leading-relaxed text-alert">
+                  {translateError}
+                </p>
+              ) : null}
             </Collapsible>
           </div>
         </section>

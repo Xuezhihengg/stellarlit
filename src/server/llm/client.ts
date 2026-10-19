@@ -205,3 +205,46 @@ export async function streamChat(
     signal?.removeEventListener("abort", onAbort);
   }
 }
+
+/**
+ * 非流式文本生成 —— 翻译这类"一次性返回"的任务用。
+ * 与 streamChat 共用密钥与超时约定;失败返回 null,由调用方给出可行动提示。
+ */
+export async function chatText(opts: {
+  system: string;
+  user: string;
+  temperature?: number;
+  maxTokens?: number;
+}): Promise<string | null> {
+  if (!serverConfig.llm.enabled) return null;
+  const { system, user, temperature = 0.2, maxTokens = 1600 } = opts;
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 60_000);
+  try {
+    const res = await fetch(`${serverConfig.llm.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${serverConfig.llm.apiKey ?? ""}`,
+      },
+      body: JSON.stringify({
+        model: serverConfig.llm.model,
+        temperature,
+        max_tokens: maxTokens,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+      }),
+      signal: ac.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as ChatResponse;
+    return data.choices?.[0]?.message?.content?.trim() || null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

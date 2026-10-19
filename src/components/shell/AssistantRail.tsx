@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AskPanel } from "@/components/shell/AskPanel";
 import { BuildStatus } from "@/components/shell/BuildStatus";
@@ -58,6 +58,11 @@ export function AssistantRail({
   const [sidebarByPaper, setSidebarByPaper] = useState<
     Record<string, PaperSidebarState>
   >({});
+  const detailScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (detailScrollRef.current) detailScrollRef.current.scrollTop = 0;
+  }, [selectedId]);
 
   const updatePaperSidebar = (
     paperId: string,
@@ -150,6 +155,7 @@ export function AssistantRail({
           都不会因为切标签而丢。inert 让隐藏页不可聚焦、不可点击。
         */}
         <div
+          ref={detailScrollRef}
           className={`absolute inset-0 overflow-y-auto px-6 py-5 transition-opacity duration-[var(--dur-base)] ${
             tab === "detail" ? "opacity-100" : "pointer-events-none opacity-0"
           }`}
@@ -188,6 +194,7 @@ export function AssistantRail({
               />
             ) : selectedPaper && payload ? (
               <PaperDetail
+                key={selectedPaper.id}
                 payload={payload}
                 paper={selectedPaper}
                 onFocusPaper={onFocusPaper}

@@ -162,6 +162,35 @@ body::before {
   animation: summary-token-fade var(--dur-base) var(--ease-out) both;
 }
 
+/* 切换论文时,观星台内的信息分区依次进入 */
+@keyframes paper-detail-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.paper-detail-part,
+.paper-detail-group {
+  animation: paper-detail-enter var(--dur-base) var(--ease-out) both;
+}
+
+.paper-detail-enter > :nth-child(2) {
+  animation-delay: calc(var(--dur-fast) * 0.35);
+}
+
+.paper-detail-enter > :nth-child(3) {
+  animation-delay: calc(var(--dur-fast) * 0.7);
+}
+
+.paper-detail-enter > :nth-child(4) {
+  animation-delay: calc(var(--dur-fast) * 1.05);
+}
+
 /* 细滚动条:面板里那一条几乎看不见的线就够了 */
 * {
   scrollbar-width: thin;
@@ -195,5 +224,10 @@ body::before {
   .summary-fade-token {
     animation-delay: 0ms !important;
     opacity: 1;
+  }
+
+  .paper-detail-part,
+  .paper-detail-group {
+    animation-delay: 0ms !important;
   }
 }

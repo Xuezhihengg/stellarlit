@@ -153,8 +153,8 @@ export function PaperDetail({
   const summaryAnimated = animatedPaperId === paper.id;
 
   return (
-    <div className="flex flex-col gap-3.5">
-      <header>
+    <div className="paper-detail-enter flex flex-col gap-3.5">
+      <header className="paper-detail-part">
         <h2 className="text-[14px] leading-snug text-ink">{paper.title}</h2>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-ink-4">
@@ -171,7 +171,7 @@ export function PaperDetail({
       </header>
 
       {paper.abstract ? (
-        <section>
+        <section className="paper-detail-part">
           <div className="flex items-baseline justify-between gap-2">
             <SectionTitle>摘要</SectionTitle>
             <button
@@ -262,7 +262,7 @@ export function PaperDetail({
         </section>
       ) : null}
 
-      <section>
+      <section className="paper-detail-part">
         <SectionTitle>
           关系{relations.length ? ` · ${relations.length}` : ""}
         </SectionTitle>
@@ -273,10 +273,19 @@ export function PaperDetail({
           </p>
         ) : (
           <div className="mt-1.5 flex flex-col gap-1">
-            {groups.map(({ kind, items }) => {
+            {groups.map(({ kind, items }, groupIndex) => {
               const isOpen = sidebar.openGroup === kind;
               return (
-                <div key={kind} className="rounded-lg border border-hair">
+                <div
+                  key={kind}
+                  className="paper-detail-group rounded-lg border border-hair"
+                  style={{
+                    animationDelay: `calc(var(--dur-fast) * ${(
+                      1.2 +
+                      groupIndex * 0.3
+                    ).toFixed(2)})`,
+                  }}
+                >
                   {/* 组头:类型 + 条数 + 箭头。每一组单独展开 */}
                   <button
                     type="button"
@@ -388,7 +397,7 @@ export function PaperDetail({
 
       </section>
 
-      <div className="flex flex-wrap gap-2">
+      <div className="paper-detail-part flex flex-wrap gap-2">
         {paper.doi || paper.urls.landing ? (
           <a
             href={paper.urls.landing ?? paper.doi}

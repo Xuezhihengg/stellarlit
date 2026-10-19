@@ -12,7 +12,25 @@ interface PaperDetailProps {
   payload: StarfieldPayload;
   paper: PaperNode;
   onFocusPaper: (id: string) => void;
+  sidebar: PaperSidebarState;
+  onUpdateSidebar: (paperId: string, patch: Partial<PaperSidebarState>) => void;
 }
+
+export interface PaperSidebarState {
+  abstractOpen: boolean;
+  openGroup: string | null;
+  openEdge: string | null;
+  translation: string | null;
+  summaryView: "original" | "translation";
+}
+
+export const DEFAULT_PAPER_SIDEBAR_STATE: PaperSidebarState = {
+  abstractOpen: true,
+  openGroup: null,
+  openEdge: null,
+  translation: null,
+  summaryView: "original",
+};
 
 /** 按词语切分中英文;标点与空格保留,避免切换时丢字符。 */
 function wordSegments(text: string): string[] {
@@ -28,38 +46,44 @@ function wordSegments(text: string): string[] {
  * 每条关系旁边都能展开模型判定时引用的**原文片段**,
  * 并且标出这条判定来自模型还是来自算法。
  */
-export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) {
-  const [openEdge, setOpenEdge] = useState<string | null>(null);
-  const [abstractOpen, setAbstractOpen] = useState(true);
-  const [openGroup, setOpenGroup] = useState<string | null>(null);
-  const [translation, setTranslation] = useState<string | null>(null);
-  const [summaryView, setSummaryView] = useState<"original" | "translation">("original");
+export function PaperDetail({
+  payload,
+  paper,
+  onFocusPaper,
+  sidebar,
+  onUpdateSidebar,
+}: PaperDetailProps) {
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
+  const [animatedPaperId, setAnimatedPaperId] = useState<string | null>(null);
   /** 翻译是异步的:换论文后旧请求回来,不能把译文贴到新论文上 */
   const paperIdRef = useRef(paper.id);
   paperIdRef.current = paper.id;
 
-  // 换一篇论文:摘要默认展开(读者先看到内容),关系分组收起,译文清空
+  const updateSidebar = (
+    patch: Partial<PaperSidebarState>,
+    targetPaperId = paper.id,
+  ) => {
+    onUpdateSidebar(targetPaperId, patch);
+  };
+
+  // 只重置临时请求状态;论文自己的展开与翻译状态由 sidebarByPaper 恢复
   useEffect(() => {
-    setOpenEdge(null);
-    setAbstractOpen(true);
-    setOpenGroup(null);
-    setTranslation(null);
-    setSummaryView("original");
     setTranslateError(null);
     setTranslating(false);
+    setAnimatedPaperId(null);
   }, [paper.id]);
 
   const switchSummary = (next: "original" | "translation") => {
-    if (next === summaryView) return;
-    setSummaryView(next);
+    if (next === sidebar.summaryView) return;
+    updateSidebar({ summaryView: next });
+    setAnimatedPaperId(paper.id);
   };
 
   const translate = async () => {
     if (!paper.abstract || translating) return;
-    if (translation) {
-      switchSummary(summaryView === "original" ? "translation" : "original");
+    if (sidebar.translation) {
+      switchSummary(sidebar.summaryView === "original" ? "translation" : "original");
       return;
     }
     setTranslating(true);
@@ -67,9 +91,11 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
     const requestedFor = paper.id;
     try {
       const res = await translateText(paper.abstract);
-      if (paperIdRef.current !== requestedFor) return;
-      setTranslation(res.text);
-      switchSummary("translation");
+      updateSidebar(
+        { translation: res.text, summaryView: "translation" },
+        requestedFor,
+      );
+      if (paperIdRef.current === requestedFor) setAnimatedPaperId(requestedFor);
     } catch (e) {
       if (paperIdRef.current !== requestedFor) return;
       setTranslateError(e instanceof Error ? e.message : "翻译失败,请稍后重试");
@@ -115,13 +141,16 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
     edgeKindLabel(kind);
 
   const summaryText =
-    summaryView === "translation" && translation ? translation : (paper.abstract ?? "");
+    sidebar.summaryView === "translation" && sidebar.translation
+      ? sidebar.translation
+      : (paper.abstract ?? "");
   const summaryTokens = useMemo(() => wordSegments(summaryText), [summaryText]);
   const translateLabel = translating
     ? "翻译中…"
-    : translation && summaryView === "translation"
+    : sidebar.translation && sidebar.summaryView === "translation"
       ? "显示原文"
       : "翻译";
+  const summaryAnimated = animatedPaperId === paper.id;
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -147,17 +176,17 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
             <SectionTitle>摘要</SectionTitle>
             <button
               type="button"
-              onClick={() => setAbstractOpen((v) => !v)}
-              aria-expanded={abstractOpen}
+              onClick={() => updateSidebar({ abstractOpen: !sidebar.abstractOpen })}
+              aria-expanded={sidebar.abstractOpen}
               className="group flex items-center gap-1 text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-ink-2"
             >
-              {abstractOpen ? "收起" : "展开"}
+              {sidebar.abstractOpen ? "收起" : "展开"}
               <svg
                 width="9"
                 height="9"
                 viewBox="0 0 10 10"
                 aria-hidden="true"
-                className={`transition-transform duration-[var(--dur-fast)] ${abstractOpen ? "rotate-180" : ""}`}
+                className={`transition-transform duration-[var(--dur-fast)] ${sidebar.abstractOpen ? "rotate-180" : ""}`}
                 style={{ transitionTimingFunction: "var(--ease-out)" }}
               >
                 <path
@@ -178,26 +207,35 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
           <div
             className="mt-1.5"
             style={
-              abstractOpen
+              sidebar.abstractOpen
                 ? undefined
                 : { maskImage: "linear-gradient(to bottom, #000 62%, transparent 100%)" }
             }
           >
-            <Collapsible open={abstractOpen} collapsedHeight={96}>
+            <Collapsible open={sidebar.abstractOpen} collapsedHeight={96}>
               <p
-                key={summaryView}
+                key={`${paper.id}-${sidebar.summaryView}`}
                 aria-live="polite"
                 className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2"
               >
                 {summaryTokens.map((token, index) => (
                   <span
-                    key={`${summaryView}-${index}`}
-                    className="summary-typewriter-token"
-                    style={{
-                      animationDelay: `calc(${(
-                        index / Math.max(1, summaryTokens.length - 1)
-                      ).toFixed(4)} * var(--dur-slow))`,
-                    }}
+                    key={`${paper.id}-${sidebar.summaryView}-${index}`}
+                    className={summaryAnimated ? "summary-fade-token" : undefined}
+                    style={
+                      summaryAnimated
+                        ? {
+                            animationDelay: `calc(${(
+                              index / Math.max(1, summaryTokens.length - 1)
+                            ).toFixed(4)} * var(--dur-slow))`,
+                          }
+                        : undefined
+                    }
+                    onAnimationEnd={
+                      summaryAnimated && index === summaryTokens.length - 1
+                        ? () => setAnimatedPaperId(null)
+                        : undefined
+                    }
                   >
                     {token}
                   </span>
@@ -208,7 +246,7 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
                   onClick={() => void translate()}
                   disabled={translating}
                   aria-busy={translating}
-                  tabIndex={abstractOpen ? 0 : -1}
+                  tabIndex={sidebar.abstractOpen ? 0 : -1}
                   className="inline rounded px-0.5 align-baseline text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:cursor-wait disabled:opacity-50"
                 >
                   {translateLabel}
@@ -236,13 +274,15 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
         ) : (
           <div className="mt-1.5 flex flex-col gap-1">
             {groups.map(({ kind, items }) => {
-              const isOpen = openGroup === kind;
+              const isOpen = sidebar.openGroup === kind;
               return (
                 <div key={kind} className="rounded-lg border border-hair">
                   {/* 组头:类型 + 条数 + 箭头。每一组单独展开 */}
                   <button
                     type="button"
-                    onClick={() => setOpenGroup(isOpen ? null : kind)}
+                    onClick={() =>
+                      updateSidebar({ openGroup: isOpen ? null : kind })
+                    }
                     aria-expanded={isOpen}
                     className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors duration-[var(--dur-fast)] hover:bg-hair/40"
                   >
@@ -281,13 +321,15 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
                       {items.slice(0, 40).map((edge, row) => {
                         const otherId = edge.source === paper.id ? edge.target : edge.source;
                         const other = paperById.get(otherId);
-                        const edgeOpen = openEdge === edge.id;
+                        const edgeOpen = sidebar.openEdge === edge.id;
 
                         return (
                           <li key={edge.id}>
                             <button
                               type="button"
-                              onClick={() => setOpenEdge(edgeOpen ? null : edge.id)}
+                              onClick={() =>
+                                updateSidebar({ openEdge: edgeOpen ? null : edge.id })
+                              }
                               aria-expanded={edgeOpen}
                               className={`w-full rounded-md px-2 py-1.5 text-left transition-colors duration-[var(--dur-fast)] ${
                                 edgeOpen

@@ -4,7 +4,11 @@ import { useMemo, useState } from "react";
 
 import { AskPanel } from "@/components/shell/AskPanel";
 import { BuildStatus } from "@/components/shell/BuildStatus";
-import { PaperDetail } from "@/components/shell/PaperDetail";
+import {
+  DEFAULT_PAPER_SIDEBAR_STATE,
+  PaperDetail,
+  type PaperSidebarState,
+} from "@/components/shell/PaperDetail";
 import { SeedConfirm } from "@/components/shell/SeedConfirm";
 import { useStarfieldStore } from "@/stores/starfield-store";
 
@@ -51,6 +55,22 @@ export function AssistantRail({
   }, [payload, selectedId]);
 
   const [tab, setTab] = useState<"detail" | "ask">("detail");
+  const [sidebarByPaper, setSidebarByPaper] = useState<
+    Record<string, PaperSidebarState>
+  >({});
+
+  const updatePaperSidebar = (
+    paperId: string,
+    patch: Partial<PaperSidebarState>,
+  ) => {
+    setSidebarByPaper((current) => {
+      const previous = current[paperId] ?? DEFAULT_PAPER_SIDEBAR_STATE;
+      return {
+        ...current,
+        [paperId]: { ...previous, ...patch },
+      };
+    });
+  };
 
   return (
     <>
@@ -171,6 +191,10 @@ export function AssistantRail({
                 payload={payload}
                 paper={selectedPaper}
                 onFocusPaper={onFocusPaper}
+                sidebar={
+                  sidebarByPaper[selectedPaper.id] ?? DEFAULT_PAPER_SIDEBAR_STATE
+                }
+                onUpdateSidebar={updatePaperSidebar}
               />
             ) : (
               <EmptyState hasPayload={Boolean(payload)} />

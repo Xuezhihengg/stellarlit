@@ -24,6 +24,11 @@ export interface PaperSidebarState {
   summaryView: "original" | "translation";
 }
 
+interface SummaryToken {
+  text: string;
+  href?: string;
+}
+
 export const DEFAULT_PAPER_SIDEBAR_STATE: PaperSidebarState = {
   abstractOpen: true,
   openGroup: null,
@@ -32,11 +37,48 @@ export const DEFAULT_PAPER_SIDEBAR_STATE: PaperSidebarState = {
   summaryView: "original",
 };
 
-/** 按词语切分中英文;标点与空格保留,避免切换时丢字符。 */
-function wordSegments(text: string): string[] {
-  return [...new Intl.Segmenter(undefined, { granularity: "word" }).segment(text)].map(
-    ({ segment }) => segment,
-  );
+/**
+ * 摘要同时做逐词切分和网址识别。
+ *
+ * Intl.Segmenter 会把 URL 拆成多个词,所以先按网址边界分段,
+ * 普通文本再交给分词器;句末标点留在链接外,避免 `rcnn.` 被当成路径。
+ */
+function summarySegments(text: string): SummaryToken[] {
+  const tokens: SummaryToken[] = [];
+  const urlPattern = /https?:\/\/[^\s<>"']+|www\.[^\s<>"']+/gi;
+  let cursor = 0;
+
+  const pushWords = (source: string) => {
+    for (const { segment } of new Intl.Segmenter(undefined, {
+      granularity: "word",
+    }).segment(source)) {
+      if (segment) tokens.push({ text: segment });
+    }
+  };
+
+  for (const match of text.matchAll(urlPattern)) {
+    const index = match.index;
+    pushWords(text.slice(cursor, index));
+
+    let url = match[0];
+    let trailing = "";
+    while (/[.,;:!?，。；：！？]$/.test(url)) {
+      trailing = `${url.at(-1)}${trailing}`;
+      url = url.slice(0, -1);
+    }
+
+    if (url) {
+      tokens.push({
+        text: url,
+        href: url.startsWith("www.") ? `https://${url}` : url,
+      });
+    }
+    if (trailing) pushWords(trailing);
+    cursor = index + match[0].length;
+  }
+
+  pushWords(text.slice(cursor));
+  return tokens;
 }
 
 /**
@@ -144,7 +186,7 @@ export function PaperDetail({
     sidebar.summaryView === "translation" && sidebar.translation
       ? sidebar.translation
       : (paper.abstract ?? "");
-  const summaryTokens = useMemo(() => wordSegments(summaryText), [summaryText]);
+  const summaryTokens = useMemo(() => summarySegments(summaryText), [summaryText]);
   const translateLabel = translating
     ? "翻译中…"
     : sidebar.translation && sidebar.summaryView === "translation"
@@ -218,28 +260,44 @@ export function PaperDetail({
                 aria-live="polite"
                 className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2"
               >
-                {summaryTokens.map((token, index) => (
-                  <span
-                    key={`${paper.id}-${sidebar.summaryView}-${index}`}
-                    className={summaryAnimated ? "summary-fade-token" : undefined}
-                    style={
-                      summaryAnimated
-                        ? {
-                            animationDelay: `calc(${(
-                              index / Math.max(1, summaryTokens.length - 1)
-                            ).toFixed(4)} * var(--dur-slow))`,
-                          }
-                        : undefined
-                    }
-                    onAnimationEnd={
-                      summaryAnimated && index === summaryTokens.length - 1
-                        ? () => setAnimatedPaperId(null)
-                        : undefined
-                    }
-                  >
-                    {token}
-                  </span>
-                ))}
+                {summaryTokens.map((token, index) => {
+                  const fadeClass = summaryAnimated ? "summary-fade-token" : "";
+                  const animationStyle = summaryAnimated
+                    ? {
+                        animationDelay: `calc(${(
+                          index / Math.max(1, summaryTokens.length - 1)
+                        ).toFixed(4)} * var(--dur-slow))`,
+                      }
+                    : undefined;
+                  const onAnimationEnd =
+                    summaryAnimated && index === summaryTokens.length - 1
+                      ? () => setAnimatedPaperId(null)
+                      : undefined;
+
+                  return token.href ? (
+                    <a
+                      key={`${paper.id}-${sidebar.summaryView}-${index}`}
+                      href={token.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title="在新标签页打开链接"
+                      className={`${fadeClass} break-all text-accent underline decoration-accent/40 decoration-dotted underline-offset-2 transition-colors hover:text-accent/80 focus-visible:ring-1 focus-visible:ring-accent/50 focus-visible:outline-none`}
+                      style={animationStyle}
+                      onAnimationEnd={onAnimationEnd}
+                    >
+                      {token.text}
+                    </a>
+                  ) : (
+                    <span
+                      key={`${paper.id}-${sidebar.summaryView}-${index}`}
+                      className={summaryAnimated ? "summary-fade-token" : undefined}
+                      style={animationStyle}
+                      onAnimationEnd={onAnimationEnd}
+                    >
+                      {token.text}
+                    </span>
+                  );
+                })}
                 {" "}
                 <button
                   type="button"

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type TransitionEvent } from "react";
 
 import { Collapsible } from "@/components/ui/Collapsible";
 import { translateText } from "@/lib/api/client";
@@ -26,6 +26,11 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
   const [abstractOpen, setAbstractOpen] = useState(true);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [translation, setTranslation] = useState<string | null>(null);
+  const [summaryView, setSummaryView] = useState<"original" | "translation">("original");
+  const [pendingSummaryView, setPendingSummaryView] = useState<
+    "original" | "translation" | null
+  >(null);
+  const [summaryVisible, setSummaryVisible] = useState(true);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
   /** 翻译是异步的:换论文后旧请求回来,不能把译文贴到新论文上 */
@@ -38,14 +43,36 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
     setAbstractOpen(true);
     setOpenGroup(null);
     setTranslation(null);
+    setSummaryView("original");
+    setPendingSummaryView(null);
+    setSummaryVisible(true);
     setTranslateError(null);
     setTranslating(false);
   }, [paper.id]);
 
+  const switchSummary = (next: "original" | "translation") => {
+    if (next === summaryView) return;
+    setPendingSummaryView(next);
+    setSummaryVisible(false);
+  };
+
+  const finishSummarySwitch = (event: TransitionEvent<HTMLDivElement>) => {
+    if (
+      event.target !== event.currentTarget ||
+      event.propertyName !== "opacity" ||
+      !pendingSummaryView
+    ) {
+      return;
+    }
+    setSummaryView(pendingSummaryView);
+    setPendingSummaryView(null);
+    setSummaryVisible(true);
+  };
+
   const translate = async () => {
     if (!paper.abstract || translating) return;
     if (translation) {
-      setTranslation(null);
+      switchSummary(summaryView === "original" ? "translation" : "original");
       return;
     }
     setTranslating(true);
@@ -55,6 +82,7 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
       const res = await translateText(paper.abstract);
       if (paperIdRef.current !== requestedFor) return;
       setTranslation(res.text);
+      switchSummary("translation");
     } catch (e) {
       if (paperIdRef.current !== requestedFor) return;
       setTranslateError(e instanceof Error ? e.message : "翻译失败,请稍后重试");
@@ -98,6 +126,16 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
   const presetLabel = (kind: string): string =>
     payload.presets.find((p) => p.id.toLowerCase() === kind.toLowerCase())?.label ??
     edgeKindLabel(kind);
+
+  const activeSummaryView = pendingSummaryView ?? summaryView;
+  const summaryText =
+    summaryView === "translation" && translation ? translation : paper.abstract;
+  const summarySwitching = pendingSummaryView !== null;
+  const translateLabel = translating
+    ? "翻译中…"
+    : translation && activeSummaryView === "translation"
+      ? "显示原文"
+      : "翻译";
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -160,31 +198,31 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
             }
           >
             <Collapsible open={abstractOpen} collapsedHeight={96}>
-              <p className="text-[12px] leading-[1.75] text-ink-2">{paper.abstract}</p>
-              <div className="mt-2 flex justify-end">
-                <button
-                  type="button"
-                  onClick={() => void translate()}
-                  disabled={translating}
-                  aria-busy={translating}
-                  tabIndex={abstractOpen ? 0 : -1}
-                  className="rounded-md px-1.5 py-0.5 text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:opacity-50"
-                >
-                  {translating ? "翻译中…" : translation ? "隐藏译文" : "翻译"}
-                </button>
-              </div>
-              {translation ? (
-                <div
-                  role="status"
+              <div
+                className={`origin-top transition-[opacity,transform] duration-[var(--dur-fast)] ${
+                  summaryVisible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
+                }`}
+                style={{ transitionTimingFunction: "var(--ease-out)" }}
+                onTransitionEnd={finishSummarySwitch}
+              >
+                <p
                   aria-live="polite"
-                  className="mt-1 rounded-md border-l-2 border-accent/40 bg-hair/30 py-2 pr-2 pl-2.5"
+                  className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2"
                 >
-                  <div className="font-mono text-[9px] tracking-[0.1em] text-ink-4">译文</div>
-                  <p className="mt-1 text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2">
-                    {translation}
-                  </p>
-                </div>
-              ) : null}
+                  {summaryText}
+                  {" "}
+                  <button
+                    type="button"
+                    onClick={() => void translate()}
+                    disabled={translating || summarySwitching}
+                    aria-busy={translating || summarySwitching}
+                    tabIndex={abstractOpen ? 0 : -1}
+                    className="inline rounded px-0.5 align-baseline text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:cursor-wait disabled:opacity-50"
+                  >
+                    {translateLabel}
+                  </button>
+                </p>
+              </div>
               {translateError ? (
                 <p role="alert" className="mt-1 text-[10.5px] leading-relaxed text-alert">
                   {translateError}

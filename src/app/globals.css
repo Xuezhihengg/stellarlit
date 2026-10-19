@@ -147,6 +147,21 @@ body::before {
   background: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
+/* 摘要逐词切换:每个词按顺序显形,但始终占住最终排版宽度 */
+@keyframes summary-token-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.summary-typewriter-token {
+  opacity: 0;
+  animation: summary-token-reveal var(--dur-fast) steps(1, start) both;
+}
+
 /* 细滚动条:面板里那一条几乎看不见的线就够了 */
 * {
   scrollbar-width: thin;
@@ -175,5 +190,10 @@ body::before {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .summary-typewriter-token {
+    animation-delay: 0ms !important;
+    opacity: 1;
   }
 }

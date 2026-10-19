@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type TransitionEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Collapsible } from "@/components/ui/Collapsible";
 import { translateText } from "@/lib/api/client";
@@ -12,6 +12,13 @@ interface PaperDetailProps {
   payload: StarfieldPayload;
   paper: PaperNode;
   onFocusPaper: (id: string) => void;
+}
+
+/** 按词语切分中英文;标点与空格保留,避免切换时丢字符。 */
+function wordSegments(text: string): string[] {
+  return [...new Intl.Segmenter(undefined, { granularity: "word" }).segment(text)].map(
+    ({ segment }) => segment,
+  );
 }
 
 /**
@@ -27,10 +34,6 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
   const [openGroup, setOpenGroup] = useState<string | null>(null);
   const [translation, setTranslation] = useState<string | null>(null);
   const [summaryView, setSummaryView] = useState<"original" | "translation">("original");
-  const [pendingSummaryView, setPendingSummaryView] = useState<
-    "original" | "translation" | null
-  >(null);
-  const [summaryVisible, setSummaryVisible] = useState(true);
   const [translating, setTranslating] = useState(false);
   const [translateError, setTranslateError] = useState<string | null>(null);
   /** 翻译是异步的:换论文后旧请求回来,不能把译文贴到新论文上 */
@@ -44,29 +47,13 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
     setOpenGroup(null);
     setTranslation(null);
     setSummaryView("original");
-    setPendingSummaryView(null);
-    setSummaryVisible(true);
     setTranslateError(null);
     setTranslating(false);
   }, [paper.id]);
 
   const switchSummary = (next: "original" | "translation") => {
     if (next === summaryView) return;
-    setPendingSummaryView(next);
-    setSummaryVisible(false);
-  };
-
-  const finishSummarySwitch = (event: TransitionEvent<HTMLDivElement>) => {
-    if (
-      event.target !== event.currentTarget ||
-      event.propertyName !== "opacity" ||
-      !pendingSummaryView
-    ) {
-      return;
-    }
-    setSummaryView(pendingSummaryView);
-    setPendingSummaryView(null);
-    setSummaryVisible(true);
+    setSummaryView(next);
   };
 
   const translate = async () => {
@@ -127,13 +114,12 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
     payload.presets.find((p) => p.id.toLowerCase() === kind.toLowerCase())?.label ??
     edgeKindLabel(kind);
 
-  const activeSummaryView = pendingSummaryView ?? summaryView;
   const summaryText =
-    summaryView === "translation" && translation ? translation : paper.abstract;
-  const summarySwitching = pendingSummaryView !== null;
+    summaryView === "translation" && translation ? translation : (paper.abstract ?? "");
+  const summaryTokens = useMemo(() => wordSegments(summaryText), [summaryText]);
   const translateLabel = translating
     ? "翻译中…"
-    : translation && activeSummaryView === "translation"
+    : translation && summaryView === "translation"
       ? "显示原文"
       : "翻译";
 
@@ -198,31 +184,36 @@ export function PaperDetail({ payload, paper, onFocusPaper }: PaperDetailProps) 
             }
           >
             <Collapsible open={abstractOpen} collapsedHeight={96}>
-              <div
-                className={`origin-top transition-[opacity,transform] duration-[var(--dur-fast)] ${
-                  summaryVisible ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0"
-                }`}
-                style={{ transitionTimingFunction: "var(--ease-out)" }}
-                onTransitionEnd={finishSummarySwitch}
+              <p
+                key={summaryView}
+                aria-live="polite"
+                className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2"
               >
-                <p
-                  aria-live="polite"
-                  className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2"
-                >
-                  {summaryText}
-                  {" "}
-                  <button
-                    type="button"
-                    onClick={() => void translate()}
-                    disabled={translating || summarySwitching}
-                    aria-busy={translating || summarySwitching}
-                    tabIndex={abstractOpen ? 0 : -1}
-                    className="inline rounded px-0.5 align-baseline text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:cursor-wait disabled:opacity-50"
+                {summaryTokens.map((token, index) => (
+                  <span
+                    key={`${summaryView}-${index}`}
+                    className="summary-typewriter-token"
+                    style={{
+                      animationDelay: `calc(${(
+                        index / Math.max(1, summaryTokens.length - 1)
+                      ).toFixed(4)} * var(--dur-slow))`,
+                    }}
                   >
-                    {translateLabel}
-                  </button>
-                </p>
-              </div>
+                    {token}
+                  </span>
+                ))}
+                {" "}
+                <button
+                  type="button"
+                  onClick={() => void translate()}
+                  disabled={translating}
+                  aria-busy={translating}
+                  tabIndex={abstractOpen ? 0 : -1}
+                  className="inline rounded px-0.5 align-baseline text-[10.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-accent disabled:cursor-wait disabled:opacity-50"
+                >
+                  {translateLabel}
+                </button>
+              </p>
               {translateError ? (
                 <p role="alert" className="mt-1 text-[10.5px] leading-relaxed text-alert">
                   {translateError}

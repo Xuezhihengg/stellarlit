@@ -36,7 +36,10 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
   const [busy, setBusy] = useState(false);
   const [fallback, setFallback] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeCitation, setActiveCitation] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  /** 角标 → 依据卡片:点击角标时滚到那张卡并高亮 */
+  const sourceRefs = useRef(new Map<number, HTMLLIElement | null>());
 
   const submit = (text: string) => {
     const q = text.trim();
@@ -53,6 +56,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setSuggestions([]);
     setFallback(false);
     setError(null);
+    setActiveCitation(null);
 
     void askStarfield(
       { starfieldId: payload.starfield.id, question: q },
@@ -84,15 +88,17 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     .filter((s): s is AskSource => Boolean(s));
   const shownSources = citedSources.length ? citedSources : sources.slice(0, 4);
 
+  /** 点 [n]:聚焦对应论文,并把那张依据卡滚进视野、标亮 */
+  const cite = (n: number) => {
+    const source = sources.find((s) => s.n === n);
+    if (!source) return;
+    setActiveCitation(n);
+    onFocusSource(source);
+    sourceRefs.current.get(n)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  };
+
   return (
     <section className="rounded-xl border border-hair bg-hair/15 p-3">
-      <p className="mb-2 text-[10.5px] leading-relaxed text-ink-4">
-        回答只依据这片星空的摘要与已验证关系;证据不足会明确说明。
-        <span className="ml-1 font-mono text-[9.5px]">
-          {payload.graph.stats.papers} 篇 · {payload.graph.stats.byLayer.semantic} 条关系
-        </span>
-      </p>
-
       <div className="flex items-center gap-2 rounded-lg border border-hair-2 bg-bg/40 px-2.5 py-1.5 focus-within:border-accent/45">
         <input
           value={question}
@@ -156,17 +162,26 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
             <p className="mb-1.5 font-mono text-[9.5px] text-warm">模型不可用 · 以下为检索原文</p>
           ) : null}
           <p className="text-[12px] leading-[1.75] whitespace-pre-wrap text-ink-2">
-            {renderWithCitations(plainText(answer))}
+            {renderWithCitations(plainText(answer), cite)}
           </p>
 
           {shownSources.length ? (
             <ul className="mt-2.5 flex flex-col gap-1">
               {shownSources.map((s) => (
-                <li key={s.chunkId}>
+                <li
+                  key={s.chunkId}
+                  ref={(el) => {
+                    sourceRefs.current.set(s.n, el);
+                  }}
+                >
                   <button
                     type="button"
                     onClick={() => onFocusSource(s)}
-                    className="w-full rounded-md px-1.5 py-1 text-left transition-colors duration-[var(--dur-fast)] hover:bg-hair/40"
+                    className={`w-full rounded-md border px-1.5 py-1 text-left transition-colors duration-[var(--dur-fast)] ${
+                      activeCitation === s.n
+                        ? "border-accent/35 bg-accent/10"
+                        : "border-transparent hover:bg-hair/40"
+                    }`}
                   >
                     <span className="mr-1.5 font-mono text-[9.5px] text-accent/80">[{s.n}]</span>
                     <span className="text-[10.5px] text-ink-3">
@@ -239,18 +254,22 @@ function plainText(text: string): string {
     .replace(/^#{1,6}\s+/gm, "");
 }
 
-/** 把 [1][3] 渲染成不可点的小角标;点击整条来源去定位论文。 */
-function renderWithCitations(text: string): React.ReactNode[] {
+/** 把 [1][3] 渲染成可点击的小角标:聚焦论文 + 滚到对应依据卡。 */
+function renderWithCitations(text: string, onCite: (n: number) => void): React.ReactNode[] {
   return text.split(/(\[\d+\])/g).map((part, i) => {
     const m = /^\[(\d+)\]$/.exec(part);
     if (!m) return part;
+    const n = Number(m[1]);
     return (
-      <sup
+      <button
         key={i}
-        className="mx-0.5 rounded bg-accent/15 px-1 font-mono text-[9px] text-accent/90"
+        type="button"
+        onClick={() => onCite(n)}
+        aria-label={`查看依据 ${n}`}
+        className="mx-0.5 -translate-y-0.5 rounded bg-accent/15 px-1 font-mono text-[9px] leading-none text-accent/90 transition-colors duration-[var(--dur-fast)] hover:bg-accent/25 hover:text-accent"
       >
-        {m[1]}
-      </sup>
+        {n}
+      </button>
     );
   });
 }

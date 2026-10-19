@@ -53,10 +53,21 @@ export function retrieveSources(
   if (!hits.length) return [];
 
   const picked: RetrievedSource[] = [];
+  /**
+   * 同一篇摘要只保留最相关的一块。
+   *
+   * 摘要切块之间自带重叠(否则答案正好落在交界处会丢半句),但重叠块
+   * 同时命中时,上下文里会出现大段重复文本:既浪费 token,也会让回答
+   * 重复同一句话。所以按"论文 + 章节"去重,只留分数最高的那块。
+   */
+  const seenSection = new Set<string>();
   for (const hit of hits) {
     const chunk = byId.get(hit.id);
     if (!chunk) continue;
+    const key = `${chunk.paperId}|${chunk.section}`;
+    if (chunk.section !== "relation" && seenSection.has(key)) continue;
     picked.push({ ...chunk, score: hit.score });
+    seenSection.add(key);
     if (picked.length >= limit) break;
   }
 
@@ -65,20 +76,26 @@ export function retrieveSources(
    *
    * 只用命中论文的**现有边**,不额外推断,所以不会引入没有证据的关系。
    */
-  const topPapers = new Set<string>();
-  for (const item of picked.slice(0, 4)) {
-    for (const id of item.paperIds) topPapers.add(id);
-    if (topPapers.size >= 3) break;
-  }
+  /**
+   * 图扩展只围绕**问题最相关的那篇论文**展开。
+   *
+   * 之前会从"前两条命中"里收集论文,而命中本身可能是关系块 ——
+   * 于是问 YOLO 时把 R-CNN 的整串关系也拉了进来。现在只认第一条
+   * 非关系块的主论文,补它的关系证据,噪声小得多。
+   */
+  const anchorPaper =
+    picked.find((p) => p.section !== "relation")?.paperId ?? picked[0]?.paperId;
 
   const used = new Set(picked.map((p) => p.chunkId));
   const bridgeScore = picked[0]?.score ?? 1;
+  let bridged = 0;
   for (const chunk of chunks) {
-    if (picked.length >= limit) break;
+    if (picked.length >= limit || bridged >= 2) break;
     if (chunk.section !== "relation" || used.has(chunk.chunkId)) continue;
-    if (!chunk.paperIds.some((id) => topPapers.has(id))) continue;
+    if (!anchorPaper || !chunk.paperIds.includes(anchorPaper)) continue;
     picked.push({ ...chunk, score: bridgeScore * 0.4 });
     used.add(chunk.chunkId);
+    bridged++;
   }
 
   return picked;

@@ -10,6 +10,8 @@ import { useStarfieldStore } from "@/stores/starfield-store";
 
 interface AssistantRailProps {
   onFocusPaper: (id: string) => void;
+  /** 关系依据:两篇论文一起聚焦 */
+  onFocusPapers?: (ids: string[]) => void;
   /** 当前构建阶段的说明文案 */
   buildLabel: string;
   collapsed: boolean;
@@ -26,6 +28,7 @@ interface AssistantRailProps {
  */
 export function AssistantRail({
   onFocusPaper,
+  onFocusPapers,
   buildLabel,
   collapsed,
   onToggleCollapse,
@@ -184,10 +187,7 @@ export function AssistantRail({
           {payload ? (
             <AskPanel
               payload={payload}
-              onFocusPaper={(id) => {
-                onFocusPaper(id);
-                setTab("detail");
-              }}
+              onFocusSource={(source) => onFocusPapers?.(source.paperIds)}
             />
           ) : (
             <p className="text-[11.5px] leading-relaxed text-ink-4">

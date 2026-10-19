@@ -47,7 +47,7 @@ export default function StarfieldPage() {
 
   const [, setLevel] = useState<ViewLevel>("paper");
   const [collapsed, setCollapsed] = useState(false);
-  const [focus, setFocus] = useState<{ id: string; nonce: number } | null>(null);
+  const [focus, setFocus] = useState<{ ids: string[]; nonce: number } | null>(null);
 
   useEffect(() => {
     void loadCapabilities();
@@ -64,12 +64,18 @@ export default function StarfieldPage() {
     if (id) void loadById(id);
   }, [loadById]);
 
-  const focusPaper = useCallback(
-    (id: string) => {
-      setSelected(id);
-      setFocus({ id, nonce: Date.now() });
+  const focusPapers = useCallback(
+    (ids: string[]) => {
+      if (!ids.length) return;
+      setSelected(ids[0] ?? null);
+      setFocus({ ids, nonce: Date.now() });
     },
     [setSelected],
+  );
+
+  const focusPaper = useCallback(
+    (id: string) => focusPapers([id]),
+    [focusPapers],
   );
 
   const buildLabel =
@@ -140,6 +146,7 @@ export default function StarfieldPage() {
         collapsed={collapsed}
         onToggleCollapse={() => setCollapsed((c) => !c)}
         onFocusPaper={focusPaper}
+        onFocusPapers={focusPapers}
         buildLabel={buildLabel}
       />
 

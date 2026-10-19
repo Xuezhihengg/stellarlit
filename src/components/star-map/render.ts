@@ -101,6 +101,8 @@ export interface RenderInput {
   pointer?: { x: number; y: number };
   /** 逐帧动画状态;不传则一切都按终态绘制(截图、测试用) */
   anim?: AnimState;
+  /** 关系卡双论文聚焦时的"第二篇":画一圈同伴环,表示它也在焦点里 */
+  companionId?: string | null;
 }
 
 /**
@@ -204,7 +206,20 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
 
   // ---------- 4. 星体 ----------
   if (a.node > 0.01) {
-    drawNodes(ctx, scene, width, height, p, a.node, time, fx, fy, camera.scale, anim);
+    drawNodes(
+      ctx,
+      scene,
+      width,
+      height,
+      p,
+      a.node,
+      time,
+      fx,
+      fy,
+      camera.scale,
+      anim,
+      input.companionId ?? null,
+    );
   }
 
   // ---------- 5a. 引用方向的粒子 ----------
@@ -505,6 +520,7 @@ function drawNodes(
   fy: Float64Array,
   scale: number,
   anim: AnimState,
+  companionId: string | null,
 ): void {
   ctx.save();
   ctx.globalCompositeOperation = p.blend;
@@ -592,6 +608,21 @@ function drawNodes(
       ctx.lineWidth = 1.1;
       ctx.beginPath();
       ctx.arc(x, y, r + 4 + ease * 6, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    /**
+     * 关系卡的"另一篇":一圈低透明度的同伴环。
+     *
+     * 不用选中态(那颗星不该展开完整标题),但要让用户一眼看出
+     * "这条关系说的是这两篇"——镜头同时框住它们,环也同时亮着。
+     */
+    if (companionId && n.id === companionId && focus < 0.01) {
+      ctx.globalAlpha = 0.34 * a;
+      ctx.strokeStyle = p.accent;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(x, y, r + 5, 0, Math.PI * 2);
       ctx.stroke();
     }
   }

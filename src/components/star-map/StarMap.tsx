@@ -37,8 +37,11 @@ interface StarMapProps {
   theme: "dark" | "light";
   /** 右侧被侧栏遮住的像素宽度:自适应视角时要把它让出来 */
   rightInset?: number;
-  /** 外部要求把镜头对准某篇论文。nonce 变化即触发,避免同一目标重复聚焦。 */
-  focus?: { id: string; nonce: number } | null;
+  /**
+   * 外部聚焦请求。ids 一篇 = 聚焦单篇;两篇 = 把两篇一起放进视野
+   * (引用关系卡的"双论文聚焦")。nonce 变化即触发。
+   */
+  focus?: { ids: string[]; nonce: number } | null;
   onSelect: (id: string | null) => void;
   /** 双击某颗星(用于"双击即打开详情侧栏") */
   onStarDoubleClick?: (id: string) => void;
@@ -89,6 +92,9 @@ export function StarMap({
    */
   const onStarDoubleClickRef = useRef(onStarDoubleClick);
   onStarDoubleClickRef.current = onStarDoubleClick;
+  /** 关系卡的双论文聚焦:第二篇画一圈"同伴环",但不抢选中态 */
+  const focusRef = useRef(focus);
+  focusRef.current = focus;
   const focusOnSelectRef = useRef(focusOnSelect);
   focusOnSelectRef.current = focusOnSelect;
   const sizeRef = useRef({ w: 0, h: 0, dpr: 1 });
@@ -178,14 +184,43 @@ export function StarMap({
      * 那么用户点一颗新星之后,这个旧请求会立刻把镜头再拽回原来的目标 ——
      * 表现就是"单击没有聚焦"。读当前场景走 ref,而不是进依赖。
      */
-    const node = liveRef.current.scene?.nodes.find((n) => n.id === focus.id);
-    if (!node) return;
+    const sceneNow = liveRef.current.scene;
+    if (!sceneNow) return;
+    const nodes = focus.ids
+      .map((id) => sceneNow.nodes.find((n) => n.id === id))
+      .filter((n): n is NonNullable<typeof n> => Boolean(n));
+    if (!nodes.length) return;
+
+    const { w, h } = sizeRef.current;
     const inset = rightInsetRef.current;
-    const scale = clampScale(Math.max(1.6, cameraRef.current.scale));
-    // 目标要落在可视区中心,同样要把侧栏让出来
+    const usableW = Math.max(120, w - Math.min(inset, w * 0.45));
+
+    if (nodes.length === 1) {
+      const node = nodes[0]!;
+      const scale = clampScale(Math.max(1.6, cameraRef.current.scale));
+      // 目标要落在可视区中心,同样要把侧栏让出来
+      targetRef.current = { x: node.x + inset / 2 / scale, y: node.y, scale };
+      return;
+    }
+
+    /**
+     * 两篇一起聚焦:镜头取中点,并按包围盒选一个"刚好装下"的缩放。
+     * 留出 260px 的边距给星体标题与关系标签;缩放钳在 0.32~2.4,
+     * 避免两篇挨得极近时镜头突然怼到脸上。
+     */
+    const minX = Math.min(...nodes.map((n) => n.x));
+    const maxX = Math.max(...nodes.map((n) => n.x));
+    const minY = Math.min(...nodes.map((n) => n.y));
+    const maxY = Math.max(...nodes.map((n) => n.y));
+    const spanX = Math.max(1, maxX - minX);
+    const spanY = Math.max(1, maxY - minY);
+    const pad = Math.min(320, Math.min(usableW, h) * 0.35);
+    const fit = Math.min((usableW - pad) / spanX, (h - pad) / spanY);
+    const scale = clampScale(Math.max(0.32, Math.min(2.4, fit)));
+
     targetRef.current = {
-      x: node.x + inset / 2 / scale,
-      y: node.y,
+      x: (minX + maxX) / 2 + inset / 2 / scale,
+      y: (minY + maxY) / 2,
       scale,
     };
   }, [focus, payload]);
@@ -457,6 +492,12 @@ export function StarMap({
             time: reduceMotion ? 0 : elapsed,
             pointer: reduceMotion ? { x: 0, y: 0 } : pointerRef.current,
             anim,
+            companionId:
+              focusRef.current &&
+              focusRef.current.ids.length > 1 &&
+              focusRef.current.ids[0] === selectedIdRef.current
+                ? focusRef.current.ids[1] ?? null
+                : null,
           });
         }
 

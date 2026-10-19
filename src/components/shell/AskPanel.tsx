@@ -8,7 +8,8 @@ import type { AskSource } from "@/types/rag";
 
 interface AskPanelProps {
   payload: StarfieldPayload;
-  onFocusPaper: (id: string) => void;
+  /** 点依据:单篇就聚焦单篇,关系卡则把两篇一起放进镜头 */
+  onFocusSource: (source: AskSource) => void;
 }
 
 const SUGGESTIONS = [
@@ -24,7 +25,7 @@ const SUGGESTIONS = [
  * 所以用户在看到第一句回答之前就知道"它查了哪些论文、哪些段落"——
  * 这让回答从"模型说的"变成"有出处的"。
  */
-export function AskPanel({ payload, onFocusPaper }: AskPanelProps) {
+export function AskPanel({ payload, onFocusSource }: AskPanelProps) {
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<AskSource[]>([]);
@@ -159,7 +160,7 @@ export function AskPanel({ payload, onFocusPaper }: AskPanelProps) {
                 <li key={s.chunkId}>
                   <button
                     type="button"
-                    onClick={() => onFocusPaper(s.paperId)}
+                    onClick={() => onFocusSource(s)}
                     className="w-full rounded-md px-1.5 py-1 text-left transition-colors duration-[var(--dur-fast)] hover:bg-hair/40"
                   >
                     <span className="mr-1.5 font-mono text-[9.5px] text-accent/80">[{s.n}]</span>

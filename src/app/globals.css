@@ -191,6 +191,22 @@ body::before {
   animation-delay: calc(var(--dur-fast) * 1.05);
 }
 
+/* 回看历史答案时,整段回答连同引用依据一起重新浮现 */
+@keyframes ask-answer-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ask-answer-enter {
+  animation: ask-answer-enter var(--dur-base) var(--ease-out) both;
+}
+
 /* 细滚动条:面板里那一条几乎看不见的线就够了 */
 * {
   scrollbar-width: thin;

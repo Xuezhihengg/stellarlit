@@ -40,8 +40,14 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
   const [error, setError] = useState<string | null>(null);
   const [activeCitation, setActiveCitation] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [replayedAnswer, setReplayedAnswer] = useState<{
+    createdAt: number;
+    nonce: number;
+  } | null>(null);
   const { history, add: addHistory } = useAskHistory(payload.starfield.id);
   const abortRef = useRef<AbortController | null>(null);
+  const historyListRef = useRef<HTMLDivElement | null>(null);
+  const replayNonceRef = useRef(0);
   /** 角标 → 依据卡片:点击角标时滚到那张卡并高亮 */
   const sourceRefs = useRef(new Map<number, HTMLLIElement | null>());
 
@@ -58,7 +64,18 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setError(null);
     setActiveCitation(null);
     setHistoryOpen(false);
+    setReplayedAnswer(null);
   }, [payload.starfield.id]);
+
+  // 最新记录放在底部:每次展开历史都直接定位到今天最关心的一条
+  useEffect(() => {
+    if (!historyOpen) return;
+    const frame = requestAnimationFrame(() => {
+      const list = historyListRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [historyOpen, history.length]);
 
   const submit = (text: string) => {
     const q = text.trim();
@@ -79,6 +96,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setError(null);
     setActiveCitation(null);
     setHistoryOpen(false);
+    setReplayedAnswer(null);
 
     void askStarfield(
       { starfieldId: payload.starfield.id, question: q },
@@ -129,9 +147,11 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     .map((n) => sources.find((s) => s.n === n))
     .filter((s): s is AskSource => Boolean(s));
   const shownSources = citedSources.length ? citedSources : sources.slice(0, 4);
+  const orderedHistory = [...history].reverse();
 
   const showHistoryEntry = (entry: AskHistoryEntry) => {
     abortRef.current?.abort();
+    replayNonceRef.current += 1;
     setQuestion(entry.question);
     setAnswer(entry.answer);
     setSources(entry.sources);
@@ -142,6 +162,10 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setActiveCitation(null);
     setBusy(false);
     setHistoryOpen(false);
+    setReplayedAnswer({
+      createdAt: entry.createdAt,
+      nonce: replayNonceRef.current,
+    });
   };
 
   /** 点 [n]:聚焦对应论文,并把那张依据卡滚进视野、标亮 */
@@ -190,10 +214,13 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
       </div>
 
       <Collapsible open={historyOpen} className="mb-2">
-        <div className="max-h-60 overflow-y-auto rounded-lg border border-hair bg-bg/35">
+        <div
+          ref={historyListRef}
+          className="max-h-60 overflow-y-auto rounded-lg border border-hair bg-bg/35"
+        >
           {history.length ? (
             <ul className="divide-y divide-hair">
-              {history.map((entry) => (
+              {orderedHistory.map((entry) => (
                 <li key={entry.id}>
                   <button
                     type="button"
@@ -285,7 +312,17 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
       ) : null}
 
       {answer ? (
-        <div className="mt-3 border-t border-hair pt-2.5">
+        <div
+          key={replayedAnswer ? `history-${replayedAnswer.nonce}` : "live-answer"}
+          className={`mt-3 border-t border-hair pt-2.5 ${
+            replayedAnswer ? "ask-answer-enter" : ""
+          }`}
+        >
+          {replayedAnswer ? (
+            <p className="mb-1.5 font-mono text-[9px] tracking-[0.1em] text-ink-4">
+              历史回答 · {formatHistoryTime(replayedAnswer.createdAt)}
+            </p>
+          ) : null}
           {fallback ? (
             <p className="mb-1.5 font-mono text-[9.5px] text-warm">模型不可用 · 以下为检索原文</p>
           ) : null}

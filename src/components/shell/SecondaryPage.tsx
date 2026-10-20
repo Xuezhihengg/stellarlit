@@ -17,7 +17,7 @@ interface SecondaryPageProps {
  */
 export function SecondaryPage({ title, subtitle, actions, children }: SecondaryPageProps) {
   return (
-    <main className="min-h-dvh bg-bg">
+    <main className="h-dvh overflow-y-auto bg-bg">
       <div className="mx-auto max-w-[1080px] px-8 py-12">
         <header className="mb-10 flex items-start justify-between gap-6">
           <div>

@@ -124,10 +124,10 @@ export default function SettingsPage() {
       <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[188px_minmax(0,1fr)] lg:gap-10">
         <aside className="flex flex-row flex-wrap gap-1 border-b border-hair pb-4 lg:sticky lg:top-8 lg:flex-col lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5">
           {[
-            ["models", "模型服务", "厂商、模型与能力"],
-            ["relations", "关系判定", "图谱语义规则"],
-            ["privacy", "数据与隐私", "密钥与出网范围"],
-          ].map(([id, label, note]) => {
+            ["models", "模型服务"],
+            ["relations", "关系判定"],
+            ["privacy", "数据与隐私"],
+          ].map(([id, label]) => {
             const active = activeSection === id;
             return (
               <button
@@ -141,7 +141,6 @@ export default function SettingsPage() {
                 }`}
               >
                 <span className="block text-[12px]">{label}</span>
-                <span className="mt-0.5 block text-[9.5px] text-ink-4">{note}</span>
               </button>
             );
           })}
@@ -154,10 +153,7 @@ export default function SettingsPage() {
 
           {activeSection === "relations" ? (
             <section>
-              <SectionHead
-                title="关系判定"
-                note="每一类关系都是一条可编辑的判定规则。关掉它,图里就不会再出现这种边。"
-              />
+              <SectionHead title="关系判定" />
               {presets === null ? (
                 <p className="text-[12.5px] text-ink-4">正在读取…</p>
               ) : (
@@ -384,10 +380,7 @@ function ModelSection() {
   return (
     <section className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-5">
-        <SectionHead
-          title="模型服务"
-          note="添加服务商和模型,再把不同服务绑定到合适的模型。"
-        />
+        <h2 className="text-[18px] tracking-[0.02em] text-ink">添加服务商</h2>
         <div className="flex shrink-0 items-center gap-2">
           {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
           <GhostButton size="sm" active={dirty} onClick={() => void save()} disabled={!dirty || saving}>
@@ -399,8 +392,7 @@ function ModelSection() {
       {error ? <p className="text-[11px] text-alert">{error}</p> : null}
 
       <div className="rounded-xl border border-hair px-5 py-4">
-        <p className="text-[11px] tracking-[0.08em] text-ink-3">添加服务商</p>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {PROVIDER_PRESETS.map((provider) => {
             const active = providerDraft === provider.id;
             return (
@@ -421,10 +413,7 @@ function ModelSection() {
             );
           })}
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[10px] text-ink-4">
-            {providerPreset(providerDraft).note}
-          </p>
+        <div className="mt-3 flex justify-end">
           <GhostButton size="sm" onClick={addAccount} disabled={!settings}>
             添加服务商
           </GhostButton>
@@ -456,10 +445,7 @@ function ModelSection() {
 
       {settings ? (
         <div className="rounded-xl border border-hair px-5 py-4">
-          <SectionHead
-            title="服务绑定"
-            note="问答服务只显示支持图像输入的模型；未绑定某项服务时回退环境变量。"
-          />
+          <h2 className="text-[15px] text-ink">服务绑定</h2>
           <div className="mt-4 flex flex-col divide-y divide-hair">
             {MODEL_SERVICES.map((service) => {
               const candidates = service.requiresVision ? visionModels : usableModels;
@@ -467,7 +453,6 @@ function ModelSection() {
                 <ServiceBinding
                   key={service.id}
                   label={service.label}
-                  note={service.note}
                   value={settings.services[service.id]}
                   models={candidates}
                   onChange={(id) =>
@@ -664,13 +649,11 @@ function AccountCard({
 
 function ServiceBinding({
   label,
-  note,
   value,
   models,
   onChange,
 }: {
   label: string;
-  note: string;
   value: string | null;
   models: ModelSettingsDto["models"];
   onChange: (id: string) => void;
@@ -679,18 +662,16 @@ function ServiceBinding({
     <div className="grid grid-cols-1 items-center gap-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[180px_1fr] md:gap-5">
       <div>
         <p className="text-[12px] text-ink-2">{label}</p>
-        <p className="mt-0.5 text-[9.5px] leading-relaxed text-ink-4">{note}</p>
       </div>
       <SelectMenu
         value={value ?? ""}
         onChange={onChange}
         ariaLabel={`选择${label}模型`}
         options={[
-          { value: "", label: "未绑定", note: "使用环境变量回退" },
+          { value: "", label: "未绑定" },
           ...models.map((model) => ({
             value: model.id,
-            label: model.name,
-            note: model.model,
+            label: `${model.name} · ${model.model}`,
           })),
         ]}
       />
@@ -699,20 +680,21 @@ function ServiceBinding({
 }
 
 function ProviderMark({ provider }: { provider: ModelProviderId }) {
-  const mark: Record<ModelProviderId, string> = {
-    openai: "◎",
-    anthropic: "A",
-    deepseek: "D",
-    qwen: "Q",
-    custom: "+",
-  };
   return (
     <span
       aria-hidden="true"
-      className="grid h-7 w-7 place-items-center rounded-full border border-current/25 bg-current/5 font-mono text-[12px] font-semibold"
-    >
-      {mark[provider]}
-    </span>
+      className="h-8 w-8 bg-current"
+      style={{
+        maskImage: `url(/icons/providers/${provider}.svg)`,
+        WebkitMaskImage: `url(/icons/providers/${provider}.svg)`,
+        maskPosition: "center",
+        WebkitMaskPosition: "center",
+        maskRepeat: "no-repeat",
+        WebkitMaskRepeat: "no-repeat",
+        maskSize: "contain",
+        WebkitMaskSize: "contain",
+      }}
+    />
   );
 }
 

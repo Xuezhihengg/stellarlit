@@ -50,16 +50,6 @@ export async function PUT(req: Request) {
     return NextResponse.json({ error: "模型设置格式不正确" }, { status: 400 });
   }
 
-  const askModel = parsed.data.models.find(
-    (model) => model.id === parsed.data.services.ask,
-  );
-  if (askModel && !askModel.modalities.includes("vision")) {
-    return NextResponse.json(
-      { error: "多模态文献问答必须绑定支持图像输入的模型" },
-      { status: 400 },
-    );
-  }
-
   try {
     return NextResponse.json(await saveModelSettings(parsed.data));
   } catch (e) {

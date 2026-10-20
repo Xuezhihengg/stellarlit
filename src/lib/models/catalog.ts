@@ -20,33 +20,33 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: "openai",
     label: "OpenAI / GPT",
-    note: "支持文本与图像理解",
+    note: "OpenAI 当前模型目录",
     baseUrl: "https://api.openai.com/v1",
     models: [
-      { model: "gpt-4.1", name: "GPT-4.1", modalities: ["text", "vision"] },
-      { model: "gpt-4o", name: "GPT-4o", modalities: ["text", "vision"] },
-      { model: "gpt-4o-mini", name: "GPT-4o mini", modalities: ["text", "vision"] },
+      { model: "gpt-6.1-sol", name: "GPT-6.1 Sol", modalities: ["text", "vision"] },
+      { model: "gpt-6-luna", name: "GPT-6 Luna", modalities: ["text", "vision"] },
+      { model: "gpt-5.4", name: "GPT-5.4", modalities: ["text", "vision"] },
     ],
   },
   {
     id: "anthropic",
     label: "Anthropic / Claude",
-    note: "Messages API,支持图像输入",
+    note: "Anthropic 当前模型目录",
     baseUrl: "https://api.anthropic.com/v1",
     models: [
       {
-        model: "claude-sonnet-4-20250514",
-        name: "Claude Sonnet 4",
+        model: "claude-sonnet-5.5",
+        name: "Claude Sonnet 5.5",
         modalities: ["text", "vision"],
       },
       {
-        model: "claude-3-7-sonnet-latest",
-        name: "Claude 3.7 Sonnet",
+        model: "claude-haiku-5.5",
+        name: "Claude Haiku 5.5",
         modalities: ["text", "vision"],
       },
       {
-        model: "claude-3-5-haiku-latest",
-        name: "Claude 3.5 Haiku",
+        model: "claude-opus-5.5",
+        name: "Claude Opus 5.5",
         modalities: ["text", "vision"],
       },
     ],
@@ -54,23 +54,26 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   {
     id: "deepseek",
     label: "DeepSeek",
-    note: "OpenAI 兼容接口",
+    note: "DeepSeek 当前模型目录",
     baseUrl: "https://api.deepseek.com/v1",
     models: [
-      { model: "deepseek-chat", name: "DeepSeek Chat", modalities: ["text"] },
-      { model: "deepseek-reasoner", name: "DeepSeek Reasoner", modalities: ["text"] },
+      { model: "deepseek-flash", name: "DeepSeek Flash", modalities: ["text", "vision"] },
+      { model: "deepseek-v4-pro", name: "DeepSeek V4 Pro", modalities: ["text"] },
     ],
   },
   {
     id: "qwen",
     label: "通义千问 / Qwen",
-    note: "阿里云 DashScope OpenAI 兼容接口",
+    note: "阿里云百炼当前模型目录",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     models: [
-      { model: "qwen-vl-max", name: "Qwen VL Max", modalities: ["text", "vision"] },
-      { model: "qwen-vl-plus", name: "Qwen VL Plus", modalities: ["text", "vision"] },
-      { model: "qwen-max", name: "Qwen Max", modalities: ["text"] },
-      { model: "qwen-plus", name: "Qwen Plus", modalities: ["text"] },
+      { model: "qwen3.8-max", name: "Qwen3.8 Max", modalities: ["text", "vision"] },
+      { model: "qwen3.8-flash", name: "Qwen3.8 Flash", modalities: ["text", "vision"] },
+      {
+        model: "qwen3.8-omni-flash",
+        name: "Qwen3.8 Omni Flash",
+        modalities: ["text", "vision"],
+      },
     ],
   },
   {
@@ -108,4 +111,20 @@ export const MODEL_SERVICES: Array<{
 
 export function providerPreset(id: ModelProviderId): ProviderPreset {
   return PROVIDER_PRESETS.find((p) => p.id === id) ?? PROVIDER_PRESETS.at(-1)!;
+}
+
+/** 模态从已核对的模型目录和命名规则推导,不要求用户手动勾选。 */
+export function inferModelModalities(
+  provider: ModelProviderId,
+  modelId: string,
+): ModelModality[] {
+  const preset = providerPreset(provider).models.find((model) => model.model === modelId);
+  if (preset) return [...preset.modalities];
+
+  const name = modelId.toLowerCase();
+  const multimodal =
+    /(vl|vision|omni|multimodal|image|gpt-4o|gpt-4\.1|gpt-5|gpt-6|^o[34])/.test(name) ||
+    (provider === "anthropic" && name.startsWith("claude-")) ||
+    (provider === "deepseek" && /flash/.test(name));
+  return multimodal ? ["text", "vision"] : ["text"];
 }

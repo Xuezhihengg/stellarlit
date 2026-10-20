@@ -7,6 +7,7 @@ export interface SelectMenuOption {
   label: string;
   note?: string;
   icon?: ReactNode;
+  group?: string;
 }
 
 interface SelectMenuProps {
@@ -89,33 +90,41 @@ export function SelectMenu({
           aria-label={ariaLabel}
           className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-hair-2 bg-bg/95 p-1 shadow-[0_18px_45px_-22px_rgba(0,0,0,0.9)] backdrop-blur-xl"
         >
-          {options.map((option) => {
+          {options.map((option, index) => {
             const active = option.value === value;
+            const showGroup =
+              Boolean(option.group) && options[index - 1]?.group !== option.group;
             return (
-              <button
-                key={option.value || "__empty__"}
-                type="button"
-                role="option"
-                aria-selected={active}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-[var(--dur-fast)] ${
-                  active ? "bg-accent/10 text-accent" : "text-ink-2 hover:bg-hair/50"
-                }`}
-              >
-                {option.icon ? <span className="mt-0.5 shrink-0">{option.icon}</span> : null}
-                <span className="min-w-0 flex-1">
-                  <span className="block text-[10.5px] leading-relaxed">{option.label}</span>
-                  {option.note ? (
-                    <span className="mt-0.5 block text-[9px] leading-relaxed text-ink-4">
-                      {option.note}
-                    </span>
-                  ) : null}
-                </span>
-                {active ? <span className="text-[10px] text-accent">✓</span> : null}
-              </button>
+              <div key={option.value || "__empty__"}>
+                {showGroup ? (
+                  <p className="px-2.5 pt-2 pb-1 text-[9px] tracking-[0.1em] text-ink-4">
+                    {option.group}
+                  </p>
+                ) : null}
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={active}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-start gap-2 rounded-md px-2.5 py-2 text-left transition-colors duration-[var(--dur-fast)] ${
+                    active ? "bg-accent/10 text-accent" : "text-ink-2 hover:bg-hair/50"
+                  }`}
+                >
+                  {option.icon ? <span className="mt-0.5 shrink-0">{option.icon}</span> : null}
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[10.5px] leading-relaxed">{option.label}</span>
+                    {option.note ? (
+                      <span className="mt-0.5 block text-[9px] leading-relaxed text-ink-4">
+                        {option.note}
+                      </span>
+                    ) : null}
+                  </span>
+                  {active ? <span className="text-[10px] text-accent">✓</span> : null}
+                </button>
+              </div>
             );
           })}
         </div>

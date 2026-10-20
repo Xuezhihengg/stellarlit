@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { SecondaryPage } from "@/components/shell/SecondaryPage";
 import { GhostButton } from "@/components/ui/GhostButton";
+import { Modal } from "@/components/ui/Modal";
 import { SelectMenu } from "@/components/ui/SelectMenu";
 import {
   fetchPresets,
@@ -211,19 +212,14 @@ export default function SettingsPage() {
 function ModelSection() {
   const [settings, setSettings] = useState<ModelSettingsDto | null>(null);
   const [providerDraft, setProviderDraft] = useState<ModelProviderId>("openai");
-  const [modelDraft, setModelDraft] = useState({
-    accountId: "",
-    model: "",
-    name: "",
-  });
-  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [health, setHealth] = useState<Record<string, LlmHealth>>({});
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [modelModalAccountId, setModelModalAccountId] = useState<string | null>(null);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [removeProviderId, setRemoveProviderId] = useState<string | null>(null);
+  const [testingProvider, setTestingProvider] = useState(false);
+  const [providerTest, setProviderTest] = useState<LlmHealth | null>(null);
   const [providerForm, setProviderForm] = useState({
     name: "",
     apiKey: "",
@@ -239,12 +235,6 @@ function ModelSection() {
       .catch((e) => setError(e instanceof Error ? e.message : "读取模型设置失败"));
   }, []);
 
-  const change = (fn: (current: ModelSettingsDto) => ModelSettingsDto) => {
-    setSettings((current) => (current ? fn(current) : current));
-    setDirty(true);
-    setSavedAt(null);
-  };
-
   const openProviderModal = () => {
     const preset = providerPreset(providerDraft);
     setProviderForm({
@@ -255,19 +245,68 @@ function ModelSection() {
       customModel: "",
       customModelName: "",
     });
+    setEditingProviderId(null);
+    setProviderTest(null);
     setProviderModalOpen(true);
+  };
+
+  const openEditProvider = (account: ProviderAccountDto) => {
+    const models = settings?.models.filter((model) => model.accountId === account.id) ?? [];
+    const preset = providerPreset(account.provider);
+    const custom = models.find(
+      (model) => !preset.models.some((item) => item.model === model.model),
+    );
+    setProviderDraft(account.provider);
+    setProviderForm({
+      name: account.name,
+      apiKey: "",
+      baseUrl: account.baseUrl,
+      modelIds: models
+        .filter((model) => preset.models.some((item) => item.model === model.model))
+        .map((model) => model.model),
+      customModel: custom?.model ?? "",
+      customModelName: custom?.name ?? "",
+    });
+    setEditingProviderId(account.id);
+    setProviderTest(null);
+    setProviderModalOpen(true);
+  };
+
+  const testProviderDraft = async () => {
+    const model = providerForm.modelIds[0] ?? providerForm.customModel.trim();
+    if (!providerForm.apiKey.trim() || !providerForm.baseUrl.trim() || !model) return;
+    setTestingProvider(true);
+    setProviderTest({ ok: false, error: "测试中…" });
+    try {
+      setProviderTest(
+        await testLlm({
+          provider: providerDraft,
+          baseUrl: providerForm.baseUrl.trim(),
+          apiKey: providerForm.apiKey.trim(),
+          model,
+        }),
+      );
+    } catch (e) {
+      setProviderTest({
+        ok: false,
+        error: e instanceof Error ? e.message : "连接测试失败",
+      });
+    } finally {
+      setTestingProvider(false);
+    }
   };
 
   const addAccount = () => {
     if (!settings || !providerForm.name.trim() || !providerForm.baseUrl.trim()) return;
     const preset = providerPreset(providerDraft);
-    const accountId = makeId("account");
+    const accountId = editingProviderId ?? makeId("account");
+    const previous = settings.accounts.find((account) => account.id === accountId);
     const account: ProviderAccountDto = {
       id: accountId,
       provider: providerDraft,
       name: providerForm.name.trim(),
       baseUrl: providerForm.baseUrl.trim().replace(/\/+$/, ""),
-      hasApiKey: Boolean(providerForm.apiKey.trim()),
+      hasApiKey: Boolean(providerForm.apiKey.trim()) || Boolean(previous?.hasApiKey),
       apiKey: providerForm.apiKey.trim(),
     };
     const addedModels: ModelSettingsDto["models"] = preset.models
@@ -288,39 +327,46 @@ function ModelSection() {
         modalities: inferModelModalities(providerDraft, providerForm.customModel.trim()),
       });
     }
+    const previousModels = settings.models.filter(
+      (model) => model.accountId === accountId,
+    );
+    const mergedModels = addedModels.map((model) => {
+      const existing = previousModels.find((item) => item.model === model.model);
+      return existing ? { ...model, id: existing.id } : model;
+    });
+    const removedIds = new Set(
+      previousModels
+        .filter((model) => !mergedModels.some((item) => item.model === model.model))
+        .map((model) => model.id),
+    );
     const next: ModelSettingsDto = {
       ...settings,
-      accounts: [...settings.accounts, account],
-      models: [...settings.models, ...addedModels],
+      accounts: previous
+        ? settings.accounts.map((item) => (item.id === accountId ? account : item))
+        : [...settings.accounts, account],
+      models: [
+        ...settings.models.filter((model) => model.accountId !== accountId),
+        ...mergedModels,
+      ],
+      services: {
+        relation:
+          settings.services.relation && removedIds.has(settings.services.relation)
+            ? null
+            : settings.services.relation,
+        ask:
+          settings.services.ask && removedIds.has(settings.services.ask)
+            ? null
+            : settings.services.ask,
+        translate:
+          settings.services.translate && removedIds.has(settings.services.translate)
+            ? null
+            : settings.services.translate,
+      },
     };
     setSettings(next);
+    setEditingProviderId(null);
     setProviderModalOpen(false);
     void persistSettings(next);
-  };
-
-  const updateAccount = (id: string, patch: Partial<ProviderAccountDto>) => {
-    change((current) => ({
-      ...current,
-      accounts: current.accounts.map((account) =>
-        account.id === id ? { ...account, ...patch } : account,
-      ),
-    }));
-  };
-
-  const testModel = async (id: string) => {
-    setTestingId(id);
-    setHealth((current) => ({ ...current, [id]: { ok: false, error: "测试中…" } }));
-    try {
-      const result = await testLlm(id);
-      setHealth((current) => ({ ...current, [id]: result }));
-    } catch (e) {
-      setHealth((current) => ({
-        ...current,
-        [id]: { ok: false, error: e instanceof Error ? e.message : "自检失败" },
-      }));
-    } finally {
-      setTestingId(null);
-    }
   };
 
   const persistSettings = async (next: ModelSettingsDto) => {
@@ -333,7 +379,6 @@ function ModelSection() {
         services: next.services,
       });
       setSettings(saved);
-      setDirty(false);
       setSavedAt(new Date().toLocaleTimeString("zh-CN", {
         hour: "2-digit",
         minute: "2-digit",
@@ -343,10 +388,6 @@ function ModelSection() {
     } finally {
       setSaving(false);
     }
-  };
-
-  const saveCurrent = () => {
-    if (settings) void persistSettings(settings);
   };
 
   const removeAccount = (id: string) => {
@@ -374,68 +415,6 @@ function ModelSection() {
       },
     };
     setSettings(next);
-    void persistSettings(next);
-  };
-
-  const removeModel = (id: string) => {
-    if (!settings) return;
-    const next: ModelSettingsDto = {
-      ...settings,
-      models: settings.models.filter((model) => model.id !== id),
-      services: {
-        relation: settings.services.relation === id ? null : settings.services.relation,
-        ask: settings.services.ask === id ? null : settings.services.ask,
-        translate: settings.services.translate === id ? null : settings.services.translate,
-      },
-    };
-    setSettings(next);
-    void persistSettings(next);
-  };
-
-  const openModelModal = (account: ProviderAccountDto) => {
-    const first = providerPreset(account.provider).models[0];
-    setModelDraft({
-      accountId: account.id,
-      model: first?.model ?? "",
-      name: first?.name ?? "",
-    });
-    setModelModalAccountId(account.id);
-  };
-
-  const draftAccount = settings?.accounts.find(
-    (account) => account.id === modelModalAccountId,
-  );
-  const draftPreset = providerPreset(draftAccount?.provider ?? "custom");
-
-  const saveDraftModel = () => {
-    if (!settings || !draftAccount || !modelDraft.model.trim()) return;
-    const duplicate = settings.models.some(
-      (model) =>
-        model.accountId === draftAccount.id &&
-        model.model === modelDraft.model.trim(),
-    );
-    if (duplicate) {
-      setModelModalAccountId(null);
-      return;
-    }
-    const next: ModelSettingsDto = {
-      ...settings,
-      models: [
-        ...settings.models,
-        {
-          id: makeId("model"),
-          accountId: draftAccount.id,
-          name: modelDraft.name.trim() || modelDraft.model.trim(),
-          model: modelDraft.model.trim(),
-          modalities: inferModelModalities(
-            draftAccount.provider,
-            modelDraft.model.trim(),
-          ),
-        },
-      ],
-    };
-    setSettings(next);
-    setModelModalAccountId(null);
     void persistSettings(next);
   };
 
@@ -496,19 +475,8 @@ function ModelSection() {
               <AccountCard
                 key={account.id}
                 account={account}
-                onChange={(patch) => updateAccount(account.id, patch)}
-                onRemove={() => removeAccount(account.id)}
-                models={settings.models.filter(
-                  (model) => model.accountId === account.id,
-                )}
-                health={health}
-                testingId={testingId}
-                saving={saving}
-                dirty={dirty}
-                onSave={() => void saveCurrent()}
-                onAddModel={() => openModelModal(account)}
-                onModelRemove={removeModel}
-                onTest={(id) => void testModel(id)}
+                onRemove={() => setRemoveProviderId(account.id)}
+                onEdit={() => openEditProvider(account)}
               />
             ))}
             {!settings.accounts.length ? (
@@ -546,26 +514,20 @@ function ModelSection() {
         </div>
       ) : null}
 
-      {providerModalOpen ? (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-sm"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setProviderModalOpen(false);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`添加 ${addProviderPreset.label} 服务商`}
-            className="max-h-[88dvh] w-full max-w-[580px] overflow-y-auto rounded-2xl border border-hair-2 bg-bg p-5 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)]"
-          >
+      <Modal
+        open={providerModalOpen}
+        onClose={() => setProviderModalOpen(false)}
+        label={`${editingProviderId ? "修改" : "添加"} ${addProviderPreset.label} 服务商`}
+        className="max-w-[580px]"
+      >
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2.5">
                 <span className="text-ink-2">
                   <ProviderMark provider={providerDraft} />
                 </span>
-                <h2 className="text-[16px] font-medium text-ink">添加服务商</h2>
+                <h2 className="text-[16px] font-medium text-ink">
+                  {editingProviderId ? "修改服务商" : "添加服务商"}
+                </h2>
               </div>
               <button
                 type="button"
@@ -684,9 +646,35 @@ function ModelSection() {
               </div>
             </div>
 
+            {providerTest ? (
+              <p
+                className={`mt-3 rounded-lg border px-3 py-2 text-[10.5px] ${
+                  providerTest.ok
+                    ? "border-accent/30 text-accent"
+                    : "border-warm/35 text-warm"
+                }`}
+              >
+                {providerTest.ok
+                  ? `连接正常 · ${providerTest.model} · ${providerTest.latencyMs} ms`
+                  : providerTest.error}
+              </p>
+            ) : null}
+
             <div className="mt-5 flex justify-end gap-2">
               <GhostButton size="sm" onClick={() => setProviderModalOpen(false)}>
                 取消
+              </GhostButton>
+              <GhostButton
+                size="sm"
+                onClick={() => void testProviderDraft()}
+                disabled={
+                  testingProvider ||
+                  !providerForm.apiKey.trim() ||
+                  !providerForm.baseUrl.trim() ||
+                  !hasSelectedModels
+                }
+              >
+                {testingProvider ? "测试中…" : "测试连接"}
               </GhostButton>
               <GhostButton
                 size="sm"
@@ -702,270 +690,91 @@ function ModelSection() {
                 {saving ? "保存中…" : "确定"}
               </GhostButton>
             </div>
-          </div>
-        </div>
-      ) : null}
+      </Modal>
 
-      {modelModalAccountId && draftAccount ? (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-sm"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setModelModalAccountId(null);
-          }}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`为 ${draftAccount.name} 添加模型`}
-            className="w-full max-w-[520px] rounded-2xl border border-hair-2 bg-bg p-5 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)]"
+      <Modal
+        open={Boolean(removeProviderId)}
+        onClose={() => setRemoveProviderId(null)}
+        label="确认移除服务商"
+        className="max-w-[420px]"
+      >
+        <h2 className="text-[16px] font-medium text-ink">确认移除服务商</h2>
+        <p className="mt-2 text-[11.5px] leading-relaxed text-ink-3">
+          移除后,该服务商及其模型会从设置中删除,相关服务绑定也会解除。
+        </p>
+        <div className="mt-5 flex justify-end gap-2">
+          <GhostButton size="sm" onClick={() => setRemoveProviderId(null)}>
+            取消
+          </GhostButton>
+          <GhostButton
+            size="sm"
+            onClick={() => {
+              if (removeProviderId) removeAccount(removeProviderId);
+              setRemoveProviderId(null);
+            }}
           >
-            <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <span className="text-ink-2">
-                  <ProviderMark provider={draftAccount.provider} />
-                </span>
-                <h2 className="text-[15px] text-ink">添加模型</h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModelModalAccountId(null)}
-                className="text-[11px] text-ink-4 hover:text-ink-2"
-              >
-                关闭
-              </button>
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-3">
-              <div>
-                <p className="mb-1.5 text-[10px] text-ink-4">默认模型</p>
-                <SelectMenu
-                  value={modelDraft.model}
-                  ariaLabel="选择默认模型"
-                  onChange={(modelId) => {
-                    const selected = draftPreset.models.find(
-                      (model) => model.model === modelId,
-                    );
-                    setModelDraft((current) => ({
-                      ...current,
-                      model: modelId,
-                      name: selected?.name ?? modelId,
-                    }));
-                  }}
-                  options={draftPreset.models.map((model) => ({
-                    value: model.model,
-                    label: model.name,
-                    note: model.model,
-                  }))}
-                />
-              </div>
-              <label>
-                <span className="mb-1.5 block text-[10px] text-ink-4">模型 ID</span>
-                <input
-                  value={modelDraft.model}
-                  onChange={(event) =>
-                    setModelDraft((current) => ({
-                      ...current,
-                      model: event.target.value,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
-                />
-              </label>
-              <label>
-                <span className="mb-1.5 block text-[10px] text-ink-4">显示名</span>
-                <input
-                  value={modelDraft.name}
-                  onChange={(event) =>
-                    setModelDraft((current) => ({ ...current, name: event.target.value }))
-                  }
-                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
-                />
-              </label>
-              {modelDraft.model ? (
-                <p className="text-[10.5px] text-ink-3">
-                  模态识别：
-                  {inferModelModalities(
-                    draftAccount.provider,
-                    modelDraft.model,
-                  ).includes("vision")
-                    ? "多模态"
-                    : "文本"}
-                </p>
-              ) : null}
-            </div>
-            <div className="mt-5 flex justify-end gap-2">
-              <GhostButton size="sm" onClick={() => setModelModalAccountId(null)}>
-                取消
-              </GhostButton>
-              <GhostButton
-                size="sm"
-                active
-                onClick={saveDraftModel}
-                disabled={!modelDraft.model.trim() || saving}
-              >
-                {saving ? "保存中…" : "保存模型"}
-              </GhostButton>
-            </div>
-          </div>
+            确认移除
+          </GhostButton>
         </div>
-      ) : null}
+      </Modal>
+
     </section>
   );
 }
 
 function AccountCard({
   account,
-  models,
-  health,
-  testingId,
-  saving,
-  dirty,
-  onChange,
   onRemove,
-  onSave,
-  onAddModel,
-  onModelRemove,
-  onTest,
+  onEdit,
 }: {
   account: ProviderAccountDto;
-  models: ModelSettingsDto["models"];
-  health: Record<string, LlmHealth>;
-  testingId: string | null;
-  saving: boolean;
-  dirty: boolean;
-  onChange: (patch: Partial<ProviderAccountDto>) => void;
   onRemove: () => void;
-  onSave: () => void;
-  onAddModel: () => void;
-  onModelRemove: (id: string) => void;
-  onTest: (id: string) => void;
+  onEdit: () => void;
 }) {
   const preset = providerPreset(account.provider);
   return (
-    <div className="rounded-xl border border-hair px-5 py-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[13px] text-ink">{preset.label}</p>
-          <p className="mt-0.5 text-[10px] text-ink-4">
-            {account.hasApiKey ? `密钥 ${account.apiKeyHint ?? "已保存"}` : "尚未保存密钥"}
-          </p>
-        </div>
+    <div className="flex items-center gap-3 rounded-lg border border-hair px-3 py-2.5">
+      <span className="shrink-0 text-ink-3">
+        <ProviderMark provider={account.provider} />
+      </span>
+      <span className="min-w-0 flex-1 text-[12px] text-ink-2">{account.name || preset.label}</span>
+      <div className="flex items-center gap-1">
+        <button
+          type="button"
+          onClick={onEdit}
+          aria-label={`修改${account.name}`}
+          title="修改"
+          className="grid h-7 w-7 place-items-center rounded-md text-ink-4 transition-colors hover:bg-hair/50 hover:text-ink"
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M11.4 2.1l2.5 2.5-8.2 8.2-3.2.7.7-3.2 8.2-8.2z"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
         <button
           type="button"
           onClick={onRemove}
-          className="text-[10.5px] text-ink-4 transition-colors hover:text-alert"
+          aria-label={`移除${account.name}`}
+          title="移除"
+          className="grid h-7 w-7 place-items-center rounded-md text-ink-4 transition-colors hover:bg-alert/10 hover:text-alert"
         >
-          移除服务商
+          <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">
+            <path
+              d="M3 4.5h10M6 4.5V3h4v1.5M5 4.5l.6 8h4.8l.6-8M7 7v3.5M9 7v3.5"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
         </button>
-      </div>
-
-      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-        <label>
-          <span className="mb-1 block text-[10px] text-ink-4">服务商名称</span>
-          <input
-            value={account.name}
-            onChange={(e) => onChange({ name: e.target.value })}
-            className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 text-[11.5px] text-ink outline-none focus:border-accent/45"
-          />
-        </label>
-        <label>
-          <span className="mb-1 block text-[10px] text-ink-4">API Key</span>
-          <input
-            type="password"
-            autoComplete="off"
-            value={account.apiKey ?? ""}
-            onChange={(e) =>
-              onChange({
-                apiKey: e.target.value,
-                hasApiKey: Boolean(e.target.value) || account.hasApiKey,
-              })
-            }
-            placeholder={account.hasApiKey ? "留空则保留现有密钥" : "输入厂商 API Key"}
-            className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
-          />
-        </label>
-        <label className="md:col-span-2">
-          <span className="mb-1 block text-[10px] text-ink-4">API Base URL</span>
-          <input
-            value={account.baseUrl}
-            onChange={(e) => onChange({ baseUrl: e.target.value })}
-            placeholder="https://…/v1"
-            className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
-          />
-        </label>
-      </div>
-
-      <div className="mt-4 border-t border-hair pt-3">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-[11px] tracking-[0.08em] text-ink-3">模型清单</h3>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onAddModel}
-              className="text-[10.5px] text-accent hover:text-accent/80"
-            >
-              添加模型
-            </button>
-            <GhostButton
-              size="sm"
-              active={dirty}
-              onClick={onSave}
-              disabled={!dirty || saving}
-            >
-              {saving ? "保存中…" : "保存服务商"}
-            </GhostButton>
-          </div>
-        </div>
-        <div className="mt-2 flex flex-col gap-2">
-          {models.map((model) => {
-            const result = health[model.id];
-            const multimodal = model.modalities.includes("vision");
-            return (
-              <div
-                key={model.id}
-                className="flex flex-wrap items-center gap-2 rounded-lg bg-hair/20 px-3 py-2.5"
-              >
-                <div className="min-w-0 flex-1">
-                  <p className="text-[11.5px] text-ink-2">{model.name}</p>
-                  <p className="mt-0.5 font-mono text-[9.5px] text-ink-4">
-                    {model.model}
-                  </p>
-                  {result ? (
-                    <p className={`mt-1 text-[9.5px] ${result.ok ? "text-accent" : "text-warm"}`}>
-                      {result.ok ? `连接正常 · ${result.latencyMs} ms` : result.error}
-                    </p>
-                  ) : null}
-                </div>
-                <span
-                  className={`rounded-full border px-2 py-0.5 text-[9.5px] ${
-                    multimodal
-                      ? "border-accent/35 text-accent"
-                      : "border-hair-2 text-ink-4"
-                  }`}
-                >
-                  {multimodal ? "多模态模型" : "文本模型"}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => onTest(model.id)}
-                  disabled={testingId === model.id || dirty}
-                  title={dirty ? "请先保存服务商配置" : "测试连通性"}
-                  className="text-[10px] text-ink-3 hover:text-ink disabled:opacity-40"
-                >
-                  {testingId === model.id ? "测试中…" : "测试"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onModelRemove(model.id)}
-                  className="text-[10px] text-ink-4 hover:text-alert"
-                >
-                  删除
-                </button>
-              </div>
-            );
-          })}
-          {!models.length ? <p className="text-[11px] text-ink-4">暂无模型</p> : null}
-        </div>
       </div>
     </div>
   );

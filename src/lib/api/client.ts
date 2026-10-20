@@ -85,6 +85,14 @@ export interface LlmHealth {
   hint?: string;
 }
 
+export interface LlmTestTarget {
+  modelId?: string;
+  provider?: "openai" | "anthropic" | "deepseek" | "qwen" | "custom";
+  baseUrl?: string;
+  apiKey?: string;
+  model?: string;
+}
+
 /**
  * 模型连通性自检。
  *
@@ -92,10 +100,10 @@ export interface LlmHealth {
  * 「密钥没配」是一种**正常的业务状态**,不是服务端故障,
  * 界面据 ok 字段渲染即可,不必区分 catch 与 success 两条路径。
  */
-export function testLlm(modelId?: string): Promise<LlmHealth> {
+export function testLlm(target?: string | LlmTestTarget): Promise<LlmHealth> {
   return request<LlmHealth>("/api/llm/health", {
     method: "POST",
-    body: JSON.stringify({ modelId }),
+    body: JSON.stringify(typeof target === "string" ? { modelId: target } : target ?? {}),
   });
 }
 

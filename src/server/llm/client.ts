@@ -20,6 +20,7 @@ export interface ChatImage {
 interface ModelCallOptions {
   service?: ModelServiceId;
   modelId?: string;
+  target?: ResolvedModelTarget;
   system: string;
   user: string;
   temperature?: number;
@@ -43,7 +44,9 @@ interface ChatResponse {
 async function targetOf(opts: {
   service?: ModelServiceId;
   modelId?: string;
+  target?: ResolvedModelTarget;
 }): Promise<ResolvedModelTarget | null> {
+  if (opts.target) return opts.target;
   if (opts.modelId) return resolveModelById(opts.modelId);
   return resolveServiceModel(opts.service ?? "relation");
 }

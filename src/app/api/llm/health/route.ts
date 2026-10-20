@@ -14,6 +14,10 @@ const Probe = z.object({
 
 const bodySchema = z.object({
   modelId: z.string().min(1).optional(),
+  provider: z.enum(["openai", "anthropic", "deepseek", "qwen", "custom"]).optional(),
+  baseUrl: z.string().url().optional(),
+  apiKey: z.string().min(1).max(500).optional(),
+  model: z.string().min(1).max(160).optional(),
 });
 
 /** 带 modelId 时测试具体模型;不带时兼容旧客户端,测试关系判定服务。 */
@@ -23,9 +27,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "模型参数不正确" });
   }
 
-  const target = parsed.data.modelId
-    ? await resolveModelById(parsed.data.modelId)
-    : await resolveServiceModel("relation");
+  const inline =
+    parsed.data.provider &&
+    parsed.data.baseUrl &&
+    parsed.data.apiKey &&
+    parsed.data.model
+      ? {
+          accountId: "inline-test",
+          provider: parsed.data.provider,
+          baseUrl: parsed.data.baseUrl.replace(/\/+$/, ""),
+          apiKey: parsed.data.apiKey,
+          model: parsed.data.model,
+          name: parsed.data.model,
+          modalities: ["text" as const],
+        }
+      : null;
+  const target = inline
+    ? inline
+    : parsed.data.modelId
+      ? await resolveModelById(parsed.data.modelId)
+      : await resolveServiceModel("relation");
   if (!target) {
     return NextResponse.json(
       {
@@ -41,6 +62,7 @@ export async function POST(req: Request) {
   const result = await chatJson(
     {
       modelId: parsed.data.modelId,
+      target: inline ?? undefined,
       system: "你是一个连通性探针。只输出 JSON,不要任何解释。",
       user: '请回答:下面这句话里有几个字是「力」字?「力拔山兮气盖世」。只输出 {"ok": true, "answer": "数量"}',
       temperature: 0,

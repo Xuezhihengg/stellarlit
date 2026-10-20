@@ -222,29 +222,13 @@ function ModelSection() {
   const [error, setError] = useState<string | null>(null);
   const [health, setHealth] = useState<Record<string, LlmHealth>>({});
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [modelModalAccountId, setModelModalAccountId] = useState<string | null>(null);
 
   useEffect(() => {
     void getModelSettings()
       .then(setSettings)
       .catch((e) => setError(e instanceof Error ? e.message : "读取模型设置失败"));
   }, []);
-
-  useEffect(() => {
-    if (!settings?.accounts.length) return;
-    setModelDraft((current) => {
-      const currentAccount = settings.accounts.find(
-        (account) => account.id === current.accountId,
-      );
-      if (currentAccount && current.model) return current;
-      const account = settings.accounts[0]!;
-      const first = providerPreset(account.provider).models[0];
-      return {
-        accountId: account.id,
-        model: first?.model ?? "",
-        name: first?.name ?? "",
-      };
-    });
-  }, [settings?.accounts]);
 
   const change = (fn: (current: ModelSettingsDto) => ModelSettingsDto) => {
     setSettings((current) => (current ? fn(current) : current));
@@ -278,45 +262,6 @@ function ModelSection() {
     }));
   };
 
-  const removeAccount = (id: string) => {
-    change((current) => {
-      const modelIds = new Set(
-        current.models.filter((model) => model.accountId === id).map((model) => model.id),
-      );
-      return {
-        ...current,
-        accounts: current.accounts.filter((account) => account.id !== id),
-        models: current.models.filter((model) => model.accountId !== id),
-        services: {
-          relation:
-            current.services.relation && modelIds.has(current.services.relation)
-              ? null
-              : current.services.relation,
-          ask:
-            current.services.ask && modelIds.has(current.services.ask)
-              ? null
-              : current.services.ask,
-          translate:
-            current.services.translate && modelIds.has(current.services.translate)
-              ? null
-              : current.services.translate,
-        },
-      };
-    });
-  };
-
-  const removeModel = (id: string) => {
-    change((current) => ({
-      ...current,
-      models: current.models.filter((model) => model.id !== id),
-      services: {
-        relation: current.services.relation === id ? null : current.services.relation,
-        ask: current.services.ask === id ? null : current.services.ask,
-        translate: current.services.translate === id ? null : current.services.translate,
-      },
-    }));
-  };
-
   const testModel = async (id: string) => {
     setTestingId(id);
     setHealth((current) => ({ ...current, [id]: { ok: false, error: "测试中…" } }));
@@ -333,15 +278,14 @@ function ModelSection() {
     }
   };
 
-  const save = async () => {
-    if (!settings) return;
+  const persistSettings = async (next: ModelSettingsDto) => {
     setSaving(true);
     setError(null);
     try {
       const saved = await saveModelSettings({
-        accounts: settings.accounts,
-        models: settings.models,
-        services: settings.services,
+        accounts: next.accounts,
+        models: next.models,
+        services: next.services,
       });
       setSettings(saved);
       setDirty(false);
@@ -356,41 +300,98 @@ function ModelSection() {
     }
   };
 
+  const saveCurrent = () => {
+    if (settings) void persistSettings(settings);
+  };
+
+  const removeAccount = (id: string) => {
+    if (!settings) return;
+    const modelIds = new Set(
+      settings.models.filter((model) => model.accountId === id).map((model) => model.id),
+    );
+    const next: ModelSettingsDto = {
+      ...settings,
+      accounts: settings.accounts.filter((account) => account.id !== id),
+      models: settings.models.filter((model) => model.accountId !== id),
+      services: {
+        relation:
+          settings.services.relation && modelIds.has(settings.services.relation)
+            ? null
+            : settings.services.relation,
+        ask:
+          settings.services.ask && modelIds.has(settings.services.ask)
+            ? null
+            : settings.services.ask,
+        translate:
+          settings.services.translate && modelIds.has(settings.services.translate)
+            ? null
+            : settings.services.translate,
+      },
+    };
+    setSettings(next);
+    void persistSettings(next);
+  };
+
+  const removeModel = (id: string) => {
+    if (!settings) return;
+    const next: ModelSettingsDto = {
+      ...settings,
+      models: settings.models.filter((model) => model.id !== id),
+      services: {
+        relation: settings.services.relation === id ? null : settings.services.relation,
+        ask: settings.services.ask === id ? null : settings.services.ask,
+        translate: settings.services.translate === id ? null : settings.services.translate,
+      },
+    };
+    setSettings(next);
+    void persistSettings(next);
+  };
+
+  const openModelModal = (account: ProviderAccountDto) => {
+    const first = providerPreset(account.provider).models[0];
+    setModelDraft({
+      accountId: account.id,
+      model: first?.model ?? "",
+      name: first?.name ?? "",
+    });
+    setModelModalAccountId(account.id);
+  };
+
   const draftAccount = settings?.accounts.find(
-    (account) => account.id === modelDraft.accountId,
+    (account) => account.id === modelModalAccountId,
   );
   const draftPreset = providerPreset(draftAccount?.provider ?? "custom");
 
   const saveDraftModel = () => {
-    if (!draftAccount || !modelDraft.model.trim()) return;
-    change((current) => {
-      if (
-        current.models.some(
-          (model) =>
-            model.accountId === draftAccount.id &&
-            model.model === modelDraft.model.trim(),
-        )
-      ) {
-        return current;
-      }
-      return {
-        ...current,
-        models: [
-          ...current.models,
-          {
-            id: makeId("model"),
-            accountId: draftAccount.id,
-            name: modelDraft.name.trim() || modelDraft.model.trim(),
-            model: modelDraft.model.trim(),
-            modalities: inferModelModalities(
-              draftAccount.provider,
-              modelDraft.model.trim(),
-            ),
-          },
-        ],
-      };
-    });
-    setModelDraft((current) => ({ ...current, model: "", name: "" }));
+    if (!settings || !draftAccount || !modelDraft.model.trim()) return;
+    const duplicate = settings.models.some(
+      (model) =>
+        model.accountId === draftAccount.id &&
+        model.model === modelDraft.model.trim(),
+    );
+    if (duplicate) {
+      setModelModalAccountId(null);
+      return;
+    }
+    const next: ModelSettingsDto = {
+      ...settings,
+      models: [
+        ...settings.models,
+        {
+          id: makeId("model"),
+          accountId: draftAccount.id,
+          name: modelDraft.name.trim() || modelDraft.model.trim(),
+          model: modelDraft.model.trim(),
+          modalities: inferModelModalities(
+            draftAccount.provider,
+            modelDraft.model.trim(),
+          ),
+        },
+      ],
+    };
+    setSettings(next);
+    setModelModalAccountId(null);
+    void persistSettings(next);
   };
 
   const usableModels =
@@ -400,20 +401,14 @@ function ModelSection() {
     }) ?? [];
   return (
     <section className="flex flex-col gap-4">
-      <div className="flex items-start justify-between gap-5">
-        <h2 className="text-[18px] tracking-[0.02em] text-ink">添加服务商</h2>
-        <div className="flex shrink-0 items-center gap-2">
-          {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
-          <GhostButton size="sm" active={dirty} onClick={() => void save()} disabled={!dirty || saving}>
-            {saving ? "保存中…" : "保存模型设置"}
-          </GhostButton>
-        </div>
-      </div>
-
       {error ? <p className="text-[11px] text-alert">{error}</p> : null}
 
       <div className="rounded-xl border border-hair px-5 py-4">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-[18px] tracking-[0.02em] text-ink">添加服务商</h2>
+          {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
           {PROVIDER_PRESETS.map((provider) => {
             const active = providerDraft === provider.id;
             return (
@@ -451,171 +446,21 @@ function ModelSection() {
               account={account}
               onChange={(patch) => updateAccount(account.id, patch)}
               onRemove={() => removeAccount(account.id)}
+              models={settings.models.filter(
+                (model) => model.accountId === account.id,
+              )}
+              health={health}
+              testingId={testingId}
+              saving={saving}
+              dirty={dirty}
+              onSave={() => void saveCurrent()}
+              onAddModel={() => openModelModal(account)}
+              onModelRemove={removeModel}
+              onTest={(id) => void testModel(id)}
             />
           ))}
         </div>
       )}
-
-      {settings ? (
-        <div className="rounded-xl border border-hair px-5 py-4">
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-[15px] text-ink">添加模型</h2>
-            <GhostButton
-              size="sm"
-              onClick={saveDraftModel}
-              disabled={!draftAccount || !modelDraft.model.trim()}
-            >
-              保存模型
-            </GhostButton>
-          </div>
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
-            <div>
-              <p className="mb-1.5 text-[10px] text-ink-4">服务商</p>
-              <SelectMenu
-                value={modelDraft.accountId}
-                ariaLabel="选择模型所属服务商"
-                onChange={(accountId) => {
-                  const account = settings.accounts.find((item) => item.id === accountId);
-                  const first = account ? providerPreset(account.provider).models[0] : null;
-                  setModelDraft({
-                    accountId,
-                    model: first?.model ?? "",
-                    name: first?.name ?? "",
-                  });
-                }}
-                options={settings.accounts.map((account) => ({
-                  value: account.id,
-                  label: account.name,
-                  icon: <ProviderMark provider={account.provider} />,
-                }))}
-              />
-            </div>
-            <div>
-              <p className="mb-1.5 text-[10px] text-ink-4">默认模型</p>
-              <SelectMenu
-                value={modelDraft.model}
-                ariaLabel="选择默认模型"
-                onChange={(modelId) => {
-                  const selected = draftPreset.models.find(
-                    (model) => model.model === modelId,
-                  );
-                  setModelDraft((current) => ({
-                    ...current,
-                    model: modelId,
-                    name: selected?.name ?? modelId,
-                  }));
-                }}
-                options={draftPreset.models.map((model) => ({
-                  value: model.model,
-                  label: model.name,
-                  note: model.model,
-                }))}
-              />
-            </div>
-            <label>
-              <span className="mb-1.5 block text-[10px] text-ink-4">模型 ID</span>
-              <input
-                value={modelDraft.model}
-                onChange={(e) =>
-                  setModelDraft((current) => ({
-                    ...current,
-                    model: e.target.value,
-                  }))
-                }
-                placeholder="model-id"
-                className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
-              />
-            </label>
-            <label>
-              <span className="mb-1.5 block text-[10px] text-ink-4">显示名</span>
-              <input
-                value={modelDraft.name}
-                onChange={(e) =>
-                  setModelDraft((current) => ({ ...current, name: e.target.value }))
-                }
-                placeholder="模型显示名"
-                className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
-              />
-            </label>
-          </div>
-          {draftAccount && modelDraft.model ? (
-            <p className="mt-3 text-[10.5px] text-ink-3">
-              模态识别：
-              {inferModelModalities(draftAccount.provider, modelDraft.model).includes(
-                "vision",
-              )
-                ? "多模态"
-                : "文本"}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-
-      {settings ? (
-        <div className="rounded-xl border border-hair px-5 py-4">
-          <h2 className="text-[15px] text-ink">模型清单</h2>
-          <div className="mt-3 flex flex-col gap-2">
-            {settings.models.map((model) => {
-              const account = settings.accounts.find(
-                (item) => item.id === model.accountId,
-              );
-              const result = health[model.id];
-              const multimodal = model.modalities.includes("vision");
-              return (
-                <div
-                  key={model.id}
-                  className="flex flex-wrap items-center gap-3 rounded-lg bg-hair/20 px-3 py-2.5"
-                >
-                  {account ? (
-                    <span className="text-ink-3">
-                      <ProviderMark provider={account.provider} />
-                    </span>
-                  ) : null}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[11.5px] text-ink-2">{model.name}</p>
-                    <p className="mt-0.5 font-mono text-[9.5px] text-ink-4">
-                      {model.model}
-                    </p>
-                    {result ? (
-                      <p className={`mt-1 text-[9.5px] ${result.ok ? "text-accent" : "text-warm"}`}>
-                        {result.ok ? `连接正常 · ${result.latencyMs} ms` : result.error}
-                      </p>
-                    ) : null}
-                  </div>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[9.5px] ${
-                      multimodal
-                        ? "border-accent/35 text-accent"
-                        : "border-hair-2 text-ink-4"
-                    }`}
-                  >
-                    {multimodal ? "多模态模型" : "文本模型"}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => void testModel(model.id)}
-                    disabled={testingId === model.id || dirty}
-                    title={dirty ? "请先保存模型设置" : "测试连通性"}
-                    className="text-[10px] text-ink-3 hover:text-ink"
-                  >
-                    {testingId === model.id ? "测试中…" : "测试"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeModel(model.id)}
-                    className="text-[10px] text-ink-4 hover:text-alert"
-                  >
-                    删除
-                  </button>
-                </div>
-              );
-            })}
-            {!settings.models.length ? (
-              <p className="text-[11px] text-ink-4">暂无模型</p>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
 
       {settings ? (
         <div className="rounded-xl border border-hair px-5 py-4">
@@ -640,18 +485,140 @@ function ModelSection() {
           </div>
         </div>
       ) : null}
+
+      {modelModalAccountId && draftAccount ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setModelModalAccountId(null);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`为 ${draftAccount.name} 添加模型`}
+            className="w-full max-w-[520px] rounded-2xl border border-hair-2 bg-bg p-5 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="text-ink-2">
+                  <ProviderMark provider={draftAccount.provider} />
+                </span>
+                <h2 className="text-[15px] text-ink">添加模型</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setModelModalAccountId(null)}
+                className="text-[11px] text-ink-4 hover:text-ink-2"
+              >
+                关闭
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-3">
+              <div>
+                <p className="mb-1.5 text-[10px] text-ink-4">默认模型</p>
+                <SelectMenu
+                  value={modelDraft.model}
+                  ariaLabel="选择默认模型"
+                  onChange={(modelId) => {
+                    const selected = draftPreset.models.find(
+                      (model) => model.model === modelId,
+                    );
+                    setModelDraft((current) => ({
+                      ...current,
+                      model: modelId,
+                      name: selected?.name ?? modelId,
+                    }));
+                  }}
+                  options={draftPreset.models.map((model) => ({
+                    value: model.model,
+                    label: model.name,
+                    note: model.model,
+                  }))}
+                />
+              </div>
+              <label>
+                <span className="mb-1.5 block text-[10px] text-ink-4">模型 ID</span>
+                <input
+                  value={modelDraft.model}
+                  onChange={(event) =>
+                    setModelDraft((current) => ({
+                      ...current,
+                      model: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-[10px] text-ink-4">显示名</span>
+                <input
+                  value={modelDraft.name}
+                  onChange={(event) =>
+                    setModelDraft((current) => ({ ...current, name: event.target.value }))
+                  }
+                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
+                />
+              </label>
+              {modelDraft.model ? (
+                <p className="text-[10.5px] text-ink-3">
+                  模态识别：
+                  {inferModelModalities(
+                    draftAccount.provider,
+                    modelDraft.model,
+                  ).includes("vision")
+                    ? "多模态"
+                    : "文本"}
+                </p>
+              ) : null}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <GhostButton size="sm" onClick={() => setModelModalAccountId(null)}>
+                取消
+              </GhostButton>
+              <GhostButton
+                size="sm"
+                active
+                onClick={saveDraftModel}
+                disabled={!modelDraft.model.trim() || saving}
+              >
+                {saving ? "保存中…" : "保存模型"}
+              </GhostButton>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
 
 function AccountCard({
   account,
+  models,
+  health,
+  testingId,
+  saving,
+  dirty,
   onChange,
   onRemove,
+  onSave,
+  onAddModel,
+  onModelRemove,
+  onTest,
 }: {
   account: ProviderAccountDto;
+  models: ModelSettingsDto["models"];
+  health: Record<string, LlmHealth>;
+  testingId: string | null;
+  saving: boolean;
+  dirty: boolean;
   onChange: (patch: Partial<ProviderAccountDto>) => void;
   onRemove: () => void;
+  onSave: () => void;
+  onAddModel: () => void;
+  onModelRemove: (id: string) => void;
+  onTest: (id: string) => void;
 }) {
   const preset = providerPreset(account.provider);
   return (
@@ -708,6 +675,78 @@ function AccountCard({
         </label>
       </div>
 
+      <div className="mt-4 border-t border-hair pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-[11px] tracking-[0.08em] text-ink-3">模型清单</h3>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onAddModel}
+              className="text-[10.5px] text-accent hover:text-accent/80"
+            >
+              添加模型
+            </button>
+            <GhostButton
+              size="sm"
+              active={dirty}
+              onClick={onSave}
+              disabled={!dirty || saving}
+            >
+              {saving ? "保存中…" : "保存服务商"}
+            </GhostButton>
+          </div>
+        </div>
+        <div className="mt-2 flex flex-col gap-2">
+          {models.map((model) => {
+            const result = health[model.id];
+            const multimodal = model.modalities.includes("vision");
+            return (
+              <div
+                key={model.id}
+                className="flex flex-wrap items-center gap-2 rounded-lg bg-hair/20 px-3 py-2.5"
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="text-[11.5px] text-ink-2">{model.name}</p>
+                  <p className="mt-0.5 font-mono text-[9.5px] text-ink-4">
+                    {model.model}
+                  </p>
+                  {result ? (
+                    <p className={`mt-1 text-[9.5px] ${result.ok ? "text-accent" : "text-warm"}`}>
+                      {result.ok ? `连接正常 · ${result.latencyMs} ms` : result.error}
+                    </p>
+                  ) : null}
+                </div>
+                <span
+                  className={`rounded-full border px-2 py-0.5 text-[9.5px] ${
+                    multimodal
+                      ? "border-accent/35 text-accent"
+                      : "border-hair-2 text-ink-4"
+                  }`}
+                >
+                  {multimodal ? "多模态模型" : "文本模型"}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onTest(model.id)}
+                  disabled={testingId === model.id || dirty}
+                  title={dirty ? "请先保存服务商配置" : "测试连通性"}
+                  className="text-[10px] text-ink-3 hover:text-ink disabled:opacity-40"
+                >
+                  {testingId === model.id ? "测试中…" : "测试"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onModelRemove(model.id)}
+                  className="text-[10px] text-ink-4 hover:text-alert"
+                >
+                  删除
+                </button>
+              </div>
+            );
+          })}
+          {!models.length ? <p className="text-[11px] text-ink-4">暂无模型</p> : null}
+        </div>
+      </div>
     </div>
   );
 }

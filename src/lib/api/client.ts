@@ -15,6 +15,8 @@ import type {
 } from "@/types/api";
 import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
 import type {
+  ModelModality,
+  ModelProviderId,
   ModelSettingsDto,
   SaveModelSettingsRequest,
 } from "@/types/model-settings";
@@ -87,6 +89,7 @@ export interface LlmHealth {
 
 export interface LlmTestTarget {
   modelId?: string;
+  accountId?: string;
   provider?: "openai" | "anthropic" | "deepseek" | "qwen" | "custom";
   baseUrl?: string;
   apiKey?: string;
@@ -117,6 +120,28 @@ export function saveModelSettings(
   return request<ModelSettingsDto>("/api/model-settings", {
     method: "PUT",
     body: JSON.stringify(settings),
+  });
+}
+
+export interface ProviderModelsResponse {
+  ok: boolean;
+  models?: Array<{
+    id: string;
+    name: string;
+    modalities: ModelModality[];
+  }>;
+  error?: string;
+}
+
+export function fetchProviderModels(input: {
+  accountId?: string;
+  provider: ModelProviderId;
+  baseUrl: string;
+  apiKey?: string;
+}): Promise<ProviderModelsResponse> {
+  return request<ProviderModelsResponse>("/api/provider-models", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

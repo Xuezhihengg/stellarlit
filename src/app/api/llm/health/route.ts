@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { chatJson } from "@/server/llm/client";
-import { resolveModelById, resolveServiceModel } from "@/server/model-settings";
+import {
+  resolveAccountCredentials,
+  resolveModelById,
+  resolveServiceModel,
+} from "@/server/model-settings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -14,6 +18,7 @@ const Probe = z.object({
 
 const bodySchema = z.object({
   modelId: z.string().min(1).optional(),
+  accountId: z.string().min(1).optional(),
   provider: z.enum(["openai", "anthropic", "deepseek", "qwen", "custom"]).optional(),
   baseUrl: z.string().url().optional(),
   apiKey: z.string().min(1).max(500).optional(),
@@ -27,16 +32,19 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: "模型参数不正确" });
   }
 
+  const saved = parsed.data.accountId
+    ? await resolveAccountCredentials(parsed.data.accountId)
+    : null;
+  const inlineProvider = parsed.data.provider ?? saved?.provider;
+  const inlineBaseUrl = parsed.data.baseUrl ?? saved?.baseUrl;
+  const inlineApiKey = parsed.data.apiKey ?? saved?.apiKey;
   const inline =
-    parsed.data.provider &&
-    parsed.data.baseUrl &&
-    parsed.data.apiKey &&
-    parsed.data.model
+    inlineProvider && inlineBaseUrl && inlineApiKey && parsed.data.model
       ? {
           accountId: "inline-test",
-          provider: parsed.data.provider,
-          baseUrl: parsed.data.baseUrl.replace(/\/+$/, ""),
-          apiKey: parsed.data.apiKey,
+          provider: inlineProvider,
+          baseUrl: inlineBaseUrl.replace(/\/+$/, ""),
+          apiKey: inlineApiKey,
           model: parsed.data.model,
           name: parsed.data.model,
           modalities: ["text" as const],

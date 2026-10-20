@@ -7,11 +7,12 @@ import { GhostButton } from "@/components/ui/GhostButton";
 import { Modal } from "@/components/ui/Modal";
 import { SelectMenu } from "@/components/ui/SelectMenu";
 import {
+  fetchProviderModels,
   fetchPresets,
   getModelSettings,
   saveModelSettings,
   testLlm,
-  type LlmHealth,
+  type ProviderModelsResponse,
 } from "@/lib/api/client";
 import {
   inferModelModalities,
@@ -217,9 +218,16 @@ function ModelSection() {
   const [error, setError] = useState<string | null>(null);
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
+  const [editingProviderHasKey, setEditingProviderHasKey] = useState(false);
   const [removeProviderId, setRemoveProviderId] = useState<string | null>(null);
   const [testingProvider, setTestingProvider] = useState(false);
-  const [providerTest, setProviderTest] = useState<LlmHealth | null>(null);
+  const [providerTest, setProviderTest] = useState<{
+    ok: boolean;
+    message: string;
+  } | null>(null);
+  const [providerModels, setProviderModels] = useState<
+    NonNullable<ProviderModelsResponse["models"]>
+  >([]);
   const [providerForm, setProviderForm] = useState({
     name: "",
     apiKey: "",
@@ -245,7 +253,15 @@ function ModelSection() {
       customModel: "",
       customModelName: "",
     });
+    setProviderModels(
+      preset.models.map((model) => ({
+        id: model.model,
+        name: model.name,
+        modalities: model.modalities,
+      })),
+    );
     setEditingProviderId(null);
+    setEditingProviderHasKey(false);
     setProviderTest(null);
     setProviderModalOpen(true);
   };
@@ -267,29 +283,89 @@ function ModelSection() {
       customModel: custom?.model ?? "",
       customModelName: custom?.name ?? "",
     });
+    setProviderModels([
+      ...preset.models.map((model) => ({
+        id: model.model,
+        name: model.name,
+        modalities: model.modalities,
+      })),
+      ...models
+        .filter((model) => !preset.models.some((item) => item.model === model.model))
+        .map((model) => ({
+          id: model.model,
+          name: model.name,
+          modalities: model.modalities,
+        })),
+    ]);
     setEditingProviderId(account.id);
+    setEditingProviderHasKey(account.hasApiKey);
     setProviderTest(null);
     setProviderModalOpen(true);
   };
 
   const testProviderDraft = async () => {
-    const model = providerForm.modelIds[0] ?? providerForm.customModel.trim();
-    if (!providerForm.apiKey.trim() || !providerForm.baseUrl.trim() || !model) return;
+    if (!providerForm.baseUrl.trim()) return;
+    if (!providerForm.apiKey.trim() && !editingProviderHasKey) return;
+    const candidateModel =
+      providerForm.customModel.trim() || providerForm.modelIds[0] || "";
     setTestingProvider(true);
-    setProviderTest({ ok: false, error: "测试中…" });
+    setProviderTest({ ok: false, message: "正在读取服务商模型列表…" });
     try {
-      setProviderTest(
-        await testLlm({
-          provider: providerDraft,
-          baseUrl: providerForm.baseUrl.trim(),
-          apiKey: providerForm.apiKey.trim(),
-          model,
-        }),
-      );
+      const result = await fetchProviderModels({
+        accountId: editingProviderId ?? undefined,
+        provider: providerDraft,
+        baseUrl: providerForm.baseUrl.trim(),
+        apiKey: providerForm.apiKey.trim() || undefined,
+      });
+      if (!result.ok || !result.models?.length) {
+        const canFallback = /HTTP (404|405)/.test(result.error ?? "");
+        if (candidateModel && canFallback) {
+          const fallback = await testLlm({
+            accountId: editingProviderId ?? undefined,
+            provider: providerDraft,
+            baseUrl: providerForm.baseUrl.trim(),
+            apiKey: providerForm.apiKey.trim() || undefined,
+            model: candidateModel,
+          });
+          if (fallback.ok) {
+            setProviderTest({
+              ok: true,
+              message: "API Key 有效，当前模型连接正常",
+            });
+            return;
+          }
+        }
+        setProviderTest({
+          ok: false,
+          message:
+            result.error ??
+            (candidateModel
+              ? "API Key 或模型 ID 不正确"
+              : "连接成功,但没有读取到可用模型"),
+        });
+        return;
+      }
+      setProviderModels(result.models);
+      setProviderForm((current) => {
+        const stillAvailable = current.modelIds.filter((id) =>
+          result.models!.some((model) => model.id === id),
+        );
+        return {
+          ...current,
+          modelIds:
+            stillAvailable.length > 0
+              ? stillAvailable
+              : [result.models![0]!.id],
+        };
+      });
+      setProviderTest({
+        ok: true,
+        message: `连接成功,读取到 ${result.models.length} 个模型`,
+      });
     } catch (e) {
       setProviderTest({
         ok: false,
-        error: e instanceof Error ? e.message : "连接测试失败",
+        message: e instanceof Error ? e.message : "连接测试失败",
       });
     } finally {
       setTestingProvider(false);
@@ -298,7 +374,6 @@ function ModelSection() {
 
   const addAccount = () => {
     if (!settings || !providerForm.name.trim() || !providerForm.baseUrl.trim()) return;
-    const preset = providerPreset(providerDraft);
     const accountId = editingProviderId ?? makeId("account");
     const previous = settings.accounts.find((account) => account.id === accountId);
     const account: ProviderAccountDto = {
@@ -309,13 +384,13 @@ function ModelSection() {
       hasApiKey: Boolean(providerForm.apiKey.trim()) || Boolean(previous?.hasApiKey),
       apiKey: providerForm.apiKey.trim(),
     };
-    const addedModels: ModelSettingsDto["models"] = preset.models
-      .filter((model) => providerForm.modelIds.includes(model.model))
+    const addedModels: ModelSettingsDto["models"] = providerModels
+      .filter((model) => providerForm.modelIds.includes(model.id))
       .map((model) => ({
         id: makeId("model"),
         accountId,
         name: model.name,
-        model: model.model,
+        model: model.id,
         modalities: [...model.modalities],
       }));
     if (providerForm.customModel.trim()) {
@@ -499,6 +574,7 @@ function ModelSection() {
                   label={service.label}
                   value={settings.services[service.id]}
                   models={usableModels}
+                  accounts={settings.accounts}
                   onChange={(id) => {
                     const next: ModelSettingsDto = {
                       ...settings,
@@ -564,6 +640,11 @@ function ModelSection() {
                       apiKey: event.target.value,
                     }))
                   }
+                  placeholder={
+                    editingProviderHasKey
+                      ? "已保存密钥，留空则保持不变"
+                      : "输入 API Key"
+                  }
                   className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
                 />
               </label>
@@ -584,21 +665,21 @@ function ModelSection() {
               <div>
                 <p className="mb-2 text-[10px] text-ink-4">模型清单</p>
                 <div className="flex flex-col gap-2">
-                  {addProviderPreset.models.map((model) => (
+                  {providerModels.map((model) => (
                     <label
-                      key={model.model}
+                      key={model.id}
                       className="flex items-center gap-3 rounded-lg border border-hair px-3 py-2"
                     >
                       <input
                         type="checkbox"
-                        checked={providerForm.modelIds.includes(model.model)}
+                        checked={providerForm.modelIds.includes(model.id)}
                         onChange={(event) =>
                           setProviderForm((current) => ({
                             ...current,
                             modelIds: event.target.checked
-                              ? [...current.modelIds, model.model]
+                              ? [...current.modelIds, model.id]
                               : current.modelIds.filter(
-                                  (id) => id !== model.model,
+                                  (id) => id !== model.id,
                                 ),
                           }))
                         }
@@ -608,7 +689,7 @@ function ModelSection() {
                           {model.name}
                         </span>
                         <span className="block font-mono text-[9.5px] text-ink-4">
-                          {model.model}
+                          {model.id}
                         </span>
                       </span>
                       <span className="text-[9.5px] text-ink-4">
@@ -616,8 +697,7 @@ function ModelSection() {
                       </span>
                     </label>
                   ))}
-                  {providerDraft === "custom" ? (
-                    <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-2">
                       <input
                         value={providerForm.customModel}
                         onChange={(event) =>
@@ -640,8 +720,7 @@ function ModelSection() {
                         placeholder="显示名"
                         className="rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
                       />
-                    </div>
-                  ) : null}
+                  </div>
                 </div>
               </div>
             </div>
@@ -654,9 +733,7 @@ function ModelSection() {
                     : "border-warm/35 text-warm"
                 }`}
               >
-                {providerTest.ok
-                  ? `连接正常 · ${providerTest.model} · ${providerTest.latencyMs} ms`
-                  : providerTest.error}
+                {providerTest.message}
               </p>
             ) : null}
 
@@ -669,7 +746,7 @@ function ModelSection() {
                 onClick={() => void testProviderDraft()}
                 disabled={
                   testingProvider ||
-                  !providerForm.apiKey.trim() ||
+                  (!providerForm.apiKey.trim() && !editingProviderHasKey) ||
                   !providerForm.baseUrl.trim() ||
                   !hasSelectedModels
                 }
@@ -784,13 +861,23 @@ function ServiceBinding({
   label,
   value,
   models,
+  accounts,
   onChange,
 }: {
   label: string;
   value: string | null;
   models: ModelSettingsDto["models"];
+  accounts: ProviderAccountDto[];
   onChange: (id: string) => void;
 }) {
+  const sorted = [...models].sort((a, b) => {
+    const aVision = a.modalities.includes("vision") ? 1 : 0;
+    const bVision = b.modalities.includes("vision") ? 1 : 0;
+    if (aVision !== bVision) return bVision - aVision;
+    const aProvider = accounts.find((account) => account.id === a.accountId)?.name ?? "";
+    const bProvider = accounts.find((account) => account.id === b.accountId)?.name ?? "";
+    return aProvider.localeCompare(bProvider) || a.name.localeCompare(b.name);
+  });
   return (
     <div className="grid grid-cols-1 items-center gap-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[180px_1fr] md:gap-5">
       <div>
@@ -802,9 +889,13 @@ function ServiceBinding({
         ariaLabel={`选择${label}模型`}
         options={[
           { value: "", label: "未绑定" },
-          ...models.map((model) => ({
+          ...sorted.map((model) => ({
             value: model.id,
-            label: `${model.name} · ${model.model}`,
+            label: `${
+              accounts.find((account) => account.id === model.accountId)?.name ??
+              "未知服务商"
+            } · ${model.name}`,
+            note: model.model,
             group: model.modalities.includes("vision")
               ? "多模态模型"
               : "文本模型",

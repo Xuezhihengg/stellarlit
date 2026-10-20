@@ -192,6 +192,17 @@ export async function resolveModelById(id: string): Promise<ResolvedModelTarget 
   };
 }
 
+export async function resolveAccountCredentials(accountId: string) {
+  const settings = await readStored();
+  const account = settings?.accounts.find((item) => item.id === accountId);
+  if (!account?.apiKey) return null;
+  return {
+    provider: account.provider,
+    baseUrl: account.baseUrl,
+    apiKey: account.apiKey,
+  };
+}
+
 export async function resolveServiceModel(
   service: ModelServiceId,
 ): Promise<ResolvedModelTarget | null> {

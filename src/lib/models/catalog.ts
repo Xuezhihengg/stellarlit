@@ -23,9 +23,9 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     note: "OpenAI 当前模型目录",
     baseUrl: "https://api.openai.com/v1",
     models: [
-      { model: "gpt-6.1-sol", name: "GPT-6.1 Sol", modalities: ["text", "vision"] },
-      { model: "gpt-6-luna", name: "GPT-6 Luna", modalities: ["text", "vision"] },
-      { model: "gpt-5.4", name: "GPT-5.4", modalities: ["text", "vision"] },
+      { model: "gpt-4.1", name: "GPT-4.1", modalities: ["text", "vision"] },
+      { model: "gpt-4o", name: "GPT-4o", modalities: ["text", "vision"] },
+      { model: "gpt-4o-mini", name: "GPT-4o mini", modalities: ["text", "vision"] },
     ],
   },
   {
@@ -35,18 +35,18 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     baseUrl: "https://api.anthropic.com/v1",
     models: [
       {
-        model: "claude-sonnet-5.5",
-        name: "Claude Sonnet 5.5",
+        model: "claude-sonnet-4-20250514",
+        name: "Claude Sonnet 4",
         modalities: ["text", "vision"],
       },
       {
-        model: "claude-haiku-5.5",
-        name: "Claude Haiku 5.5",
+        model: "claude-3-5-haiku-latest",
+        name: "Claude 3.5 Haiku",
         modalities: ["text", "vision"],
       },
       {
-        model: "claude-opus-5.5",
-        name: "Claude Opus 5.5",
+        model: "claude-3-7-sonnet-latest",
+        name: "Claude 3.7 Sonnet",
         modalities: ["text", "vision"],
       },
     ],

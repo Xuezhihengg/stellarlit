@@ -14,6 +14,9 @@ export interface CapabilityReport {
   llm: boolean;
   embedding: boolean;
   llmModel: string | null;
+  /** 当前问答服务是否绑定多模态模型 */
+  vision?: boolean;
+  askModel?: string | null;
 }
 
 export interface QualitySummaryDto {

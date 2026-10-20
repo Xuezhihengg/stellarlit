@@ -71,12 +71,3 @@ export const serverConfig: ServerConfig = {
   dataDir: env("STELLARLIT_DATA_DIR") ?? path.join(process.cwd(), "data"),
   userAgent: `StellarLit/0.1 (academic star map; mailto:${MAILTO})`,
 };
-
-/** 面向界面的能力清单。前端据此决定显示"AI 判定"还是"启发式判定"。 */
-export function capabilityReport() {
-  return {
-    llm: serverConfig.llm.enabled,
-    embedding: serverConfig.embedding.enabled,
-    llmModel: serverConfig.llm.enabled ? serverConfig.llm.model : null,
-  };
-}

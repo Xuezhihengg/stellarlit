@@ -21,3 +21,5 @@ next-env.d.ts
 
 # 本地预计算缓存:可由上游重建,不入库
 /data/cache/
+/data/model-settings.json
+/data/model-settings.json.tmp

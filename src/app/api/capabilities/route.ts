@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { capabilityReport } from "@/server/config";
+import { capabilityReport } from "@/server/model-settings";
 
 /**
  * 服务端能力探测。
@@ -10,6 +10,6 @@ import { capabilityReport } from "@/server/config";
  */
 export const dynamic = "force-dynamic";
 
-export function GET() {
-  return NextResponse.json(capabilityReport());
+export async function GET() {
+  return NextResponse.json(await capabilityReport());
 }

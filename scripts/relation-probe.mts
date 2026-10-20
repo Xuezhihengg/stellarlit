@@ -57,8 +57,9 @@ const seedRelated = eligible.filter((f) => {
   return Boolean(a && b && (a.id === seedId || b.id === seedId));
 });
 
+const hasLlm = await llmAvailable("relation");
 console.log(`预设 ${preset.id} · 硬约束候选 ${eligible.length} 条,其中涉及种子 ${seedRelated.length} 条`);
-console.log(`大模型可用:${llmAvailable()}\n`);
+console.log(`大模型可用:${hasLlm}\n`);
 
 const ranked = seedRelated
   .map((f) => ({ f, s: heuristicScore(f, preset) }))
@@ -80,7 +81,7 @@ for (const { f, s } of ranked) {
   console.log(`A ${a.id} ${a.year} ${a.title.slice(0, 60)}`);
   console.log(`B ${b.id} ${b.year} ${b.title.slice(0, 60)}`);
 
-  if (!llmAvailable()) {
+  if (!hasLlm) {
     console.log("(没有模型密钥,只能看到候选;配置 LLM_API_KEY 后可看到模型判定)\n");
     continue;
   }

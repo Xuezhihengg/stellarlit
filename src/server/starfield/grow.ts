@@ -13,9 +13,9 @@ import type { BuildMeta, StarfieldPayload } from "@/types/api";
 import type { Graph, GraphEdge, GraphLayout, RelationPreset } from "@/types/kg";
 import type { SeedEntry, Starfield } from "@/types/starfield";
 
-import { capabilityReport } from "../config";
 import { cached } from "../cache";
 import { buildGraph, dedupe, type PreviousState } from "../graph/build";
+import { capabilityReport } from "../model-settings";
 import type { RelationReport } from "../relations/pipeline";
 import { buildSemanticEdges } from "../relations/pipeline";
 import { BUILTIN_PRESETS } from "../relations/presets";
@@ -585,7 +585,7 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
   const meta: BuildMeta = {
     quality,
     relations,
-    capabilities: capabilityReport(),
+    capabilities: await capabilityReport(),
     builtAt: new Date().toISOString(),
     durationMs: Date.now() - started,
     addedPapers,

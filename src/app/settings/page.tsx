@@ -4,7 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 
 import { SecondaryPage } from "@/components/shell/SecondaryPage";
 import { GhostButton } from "@/components/ui/GhostButton";
-import { fetchCapabilities, fetchPresets, testLlm, type LlmHealth } from "@/lib/api/client";
+import {
+  fetchCapabilities,
+  fetchPresets,
+  getModelSettings,
+  saveModelSettings,
+  testLlm,
+  type LlmHealth,
+} from "@/lib/api/client";
+import { MODEL_SERVICES, PROVIDER_PRESETS, providerPreset } from "@/lib/models/catalog";
 import {
   clearPresetOverrides,
   loadPresetOverrides,
@@ -13,6 +21,12 @@ import {
 } from "@/lib/presets/local";
 import type { CapabilityReport } from "@/types/api";
 import type { RelationPreset } from "@/types/kg";
+import type {
+  ModelModality,
+  ModelProviderId,
+  ModelSettingsDto,
+  ProviderAccountDto,
+} from "@/types/model-settings";
 
 /**
  * 设置。
@@ -27,6 +41,9 @@ export default function SettingsPage() {
   const [caps, setCaps] = useState<CapabilityReport | null>(null);
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [activeSection, setActiveSection] = useState<"models" | "relations" | "privacy">(
+    "models",
+  );
 
   useEffect(() => {
     void (async () => {
@@ -91,61 +108,106 @@ export default function SettingsPage() {
   return (
     <SecondaryPage
       title="设置"
-      subtitle="这里决定系统怎么判断两篇论文之间的关系,以及用哪个模型来做判断。改动只影响之后新建或并入的星空,已有的星空保持原样。"
+      subtitle="配置多厂商模型账户、为不同服务绑定模型,并维护论文关系判定规则。"
       actions={
-        <div className="flex items-center gap-2">
-          {savedAt && !dirty ? (
-            <span className="text-[10.5px] text-accent">{savedAt} 已保存</span>
-          ) : null}
-          <GhostButton size="sm" onClick={resetAll} disabled={!presets}>
-            全部恢复默认
-          </GhostButton>
-          <GhostButton size="sm" active={dirty} onClick={save} disabled={!dirty}>
-            保存
-          </GhostButton>
-        </div>
+        activeSection === "relations" ? (
+          <div className="flex items-center gap-2">
+            {savedAt && !dirty ? (
+              <span className="text-[10.5px] text-accent">{savedAt} 已保存</span>
+            ) : null}
+            <GhostButton size="sm" onClick={resetAll} disabled={!presets}>
+              全部恢复默认
+            </GhostButton>
+            <GhostButton size="sm" active={dirty} onClick={save} disabled={!dirty}>
+              保存
+            </GhostButton>
+          </div>
+        ) : null
       }
     >
-      <div className="flex flex-col gap-12">
-        <ModelSection caps={caps} />
+      <div className="grid grid-cols-[188px_minmax(0,1fr)] items-start gap-10">
+        <aside className="sticky top-8 flex flex-col gap-1 border-r border-hair pr-5">
+          {[
+            ["models", "模型服务", "厂商、模型与能力"],
+            ["relations", "关系判定", "图谱语义规则"],
+            ["privacy", "数据与隐私", "密钥与出网范围"],
+          ].map(([id, label, note]) => {
+            const active = activeSection === id;
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() =>
+                  setActiveSection(id as "models" | "relations" | "privacy")
+                }
+                className={`rounded-lg px-3 py-2.5 text-left transition-colors duration-[var(--dur-fast)] ${
+                  active ? "bg-hair/50 text-ink" : "text-ink-3 hover:bg-hair/25"
+                }`}
+              >
+                <span className="block text-[12px]">{label}</span>
+                <span className="mt-0.5 block text-[9.5px] text-ink-4">{note}</span>
+              </button>
+            );
+          })}
+        </aside>
 
-        <section>
-          <SectionHead
-            title="关系判定"
-            note="每一类关系都是一条可编辑的判定规则。关掉它,图里就不会再出现这种边。"
-          />
-          {presets === null ? (
-            <p className="text-[12.5px] text-ink-4">正在读取…</p>
-          ) : (
-            <ul className="flex flex-col gap-2">
-              {presets.map((p) => (
-                <PresetCard
-                  key={p.id}
-                  preset={p}
-                  baseline={baseline.find((b) => b.id === p.id)}
-                  onChange={(patch) => update(p.id, patch)}
-                  onReset={() => resetOne(p.id)}
-                />
-              ))}
-            </ul>
-          )}
-        </section>
+        <div className="min-w-0">
+          {activeSection === "models" ? (
+            <ModelSection
+              caps={caps}
+              onSaved={() => {
+                void fetchCapabilities().then(setCaps).catch(() => undefined);
+              }}
+            />
+          ) : null}
 
-        <section>
-          <SectionHead title="数据与隐私" />
-          <div className="rounded-xl border border-hair px-5 py-4">
-            <Row label="账号">
-              这一版不需要登录。星空保存在本机服务端,关系设置保存在本机浏览器。
-            </Row>
-            <Row label="出网的数据">
-              只有论文标题与 ID 会发往 OpenAlex 与 arXiv 用于检索;摘要会发往你配置的模型用于关系判定。
-            </Row>
-            <Row label="密钥">
-              只存在于服务端的 <code className="font-mono text-ink-3">.env.local</code>,
-              从不进入浏览器,也不写入代码仓库。
-            </Row>
-          </div>
-        </section>
+          {activeSection === "relations" ? (
+            <section>
+              <SectionHead
+                title="关系判定"
+                note="每一类关系都是一条可编辑的判定规则。关掉它,图里就不会再出现这种边。"
+              />
+              {presets === null ? (
+                <p className="text-[12.5px] text-ink-4">正在读取…</p>
+              ) : (
+                <ul className="flex flex-col gap-2">
+                  {presets.map((p) => (
+                    <PresetCard
+                      key={p.id}
+                      preset={p}
+                      baseline={baseline.find((b) => b.id === p.id)}
+                      onChange={(patch) => update(p.id, patch)}
+                      onReset={() => resetOne(p.id)}
+                    />
+                  ))}
+                </ul>
+              )}
+            </section>
+          ) : null}
+
+          {activeSection === "privacy" ? (
+            <section>
+              <SectionHead title="数据与隐私" />
+              <div className="rounded-xl border border-hair px-5 py-4">
+                <Row label="账号">
+                  这一版不需要登录。星空和关系设置只保存在本机。
+                </Row>
+                <Row label="出网的数据">
+                  论文标题与 ID 会发往 OpenAlex 与 arXiv;摘要及你主动上传的图表会发往当前服务绑定的模型。
+                </Row>
+                <Row label="密钥">
+                  设置页提交的厂商密钥保存在本机服务端的{" "}
+                  <code className="font-mono text-ink-3">data/model-settings.json</code>,
+                  文件权限为仅当前用户可读。读取接口只返回掩码,不会把密钥原文发回浏览器。
+                </Row>
+                <Row label="兼容配置">
+                  未在设置页绑定的服务仍可回退到{" "}
+                  <code className="font-mono text-ink-3">.env.local</code> 中的 LLM 配置。
+                </Row>
+              </div>
+            </section>
+          ) : null}
+        </div>
       </div>
     </SecondaryPage>
   );
@@ -155,102 +217,508 @@ export default function SettingsPage() {
 // 模型
 // ---------------------------------------------------------------------------
 
-function ModelSection({ caps }: { caps: CapabilityReport | null }) {
-  const [health, setHealth] = useState<LlmHealth | null>(null);
-  const [testing, setTesting] = useState(false);
-  const [showConfig, setShowConfig] = useState(false);
+function ModelSection({
+  caps,
+  onSaved,
+}: {
+  caps: CapabilityReport | null;
+  onSaved: () => void;
+}) {
+  const [settings, setSettings] = useState<ModelSettingsDto | null>(null);
+  const [providerDraft, setProviderDraft] = useState<ModelProviderId>("openai");
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [health, setHealth] = useState<Record<string, LlmHealth>>({});
+  const [testingId, setTestingId] = useState<string | null>(null);
 
-  const run = useCallback(async () => {
-    setTesting(true);
-    setHealth(null);
-    try {
-      setHealth(await testLlm());
-    } catch (e) {
-      setHealth({ ok: false, error: e instanceof Error ? e.message : "自检失败" });
-    } finally {
-      setTesting(false);
-    }
+  useEffect(() => {
+    void getModelSettings()
+      .then(setSettings)
+      .catch((e) => setError(e instanceof Error ? e.message : "读取模型设置失败"));
   }, []);
 
-  const connected = Boolean(caps?.llm);
-  const open = showConfig || !connected;
+  const change = (fn: (current: ModelSettingsDto) => ModelSettingsDto) => {
+    setSettings((current) => (current ? fn(current) : current));
+    setDirty(true);
+    setSavedAt(null);
+  };
+
+  const addAccount = () => {
+    const preset = providerPreset(providerDraft);
+    const accountId = makeId("account");
+    const account: ProviderAccountDto = {
+      id: accountId,
+      provider: providerDraft,
+      name: preset.label,
+      baseUrl: preset.baseUrl,
+      hasApiKey: false,
+      apiKey: "",
+    };
+    const models = preset.models.slice(0, 2).map((item) => ({
+      id: makeId("model"),
+      accountId,
+      name: item.name,
+      model: item.model,
+      modalities: [...item.modalities],
+    }));
+    change((current) => ({
+      ...current,
+      accounts: [...current.accounts, account],
+      models: [...current.models, ...models],
+    }));
+  };
+
+  const updateAccount = (id: string, patch: Partial<ProviderAccountDto>) => {
+    change((current) => ({
+      ...current,
+      accounts: current.accounts.map((account) =>
+        account.id === id ? { ...account, ...patch } : account,
+      ),
+    }));
+  };
+
+  const removeAccount = (id: string) => {
+    change((current) => {
+      const modelIds = new Set(
+        current.models.filter((model) => model.accountId === id).map((model) => model.id),
+      );
+      return {
+        ...current,
+        accounts: current.accounts.filter((account) => account.id !== id),
+        models: current.models.filter((model) => model.accountId !== id),
+        services: {
+          relation:
+            current.services.relation && modelIds.has(current.services.relation)
+              ? null
+              : current.services.relation,
+          ask:
+            current.services.ask && modelIds.has(current.services.ask)
+              ? null
+              : current.services.ask,
+          translate:
+            current.services.translate && modelIds.has(current.services.translate)
+              ? null
+              : current.services.translate,
+        },
+      };
+    });
+  };
+
+  const addModel = (accountId: string) => {
+    const account = settings?.accounts.find((item) => item.id === accountId);
+    const preset = providerPreset(account?.provider ?? "custom");
+    change((current) => ({
+      ...current,
+      models: [
+        ...current.models,
+        {
+          id: makeId("model"),
+          accountId,
+          name: "新模型",
+          model: preset.models[0]?.model ?? "",
+          modalities: preset.models[0]?.modalities ?? ["text"],
+        },
+      ],
+    }));
+  };
+
+  const updateModel = (
+    id: string,
+    patch: Partial<ModelSettingsDto["models"][number]>,
+  ) => {
+    change((current) => ({
+      ...current,
+      models: current.models.map((model) =>
+        model.id === id ? { ...model, ...patch } : model,
+      ),
+    }));
+  };
+
+  const removeModel = (id: string) => {
+    change((current) => ({
+      ...current,
+      models: current.models.filter((model) => model.id !== id),
+      services: {
+        relation: current.services.relation === id ? null : current.services.relation,
+        ask: current.services.ask === id ? null : current.services.ask,
+        translate: current.services.translate === id ? null : current.services.translate,
+      },
+    }));
+  };
+
+  const testModel = async (id: string) => {
+    setTestingId(id);
+    setHealth((current) => ({ ...current, [id]: { ok: false, error: "测试中…" } }));
+    try {
+      const result = await testLlm(id);
+      setHealth((current) => ({ ...current, [id]: result }));
+    } catch (e) {
+      setHealth((current) => ({
+        ...current,
+        [id]: { ok: false, error: e instanceof Error ? e.message : "自检失败" },
+      }));
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const save = async () => {
+    if (!settings) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await saveModelSettings({
+        accounts: settings.accounts,
+        models: settings.models,
+        services: settings.services,
+      });
+      setSettings(saved);
+      setDirty(false);
+      setSavedAt(new Date().toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }));
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存模型设置失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const usableModels =
+    settings?.models.filter((model) => {
+      const account = settings.accounts.find((item) => item.id === model.accountId);
+      return Boolean(account?.hasApiKey || account?.apiKey);
+    }) ?? [];
+  const visionModels = usableModels.filter((model) =>
+    model.modalities.includes("vision"),
+  );
 
   return (
-    <section>
-      <SectionHead title="模型" note="关系判定与问答都需要模型。没有也能用,但结论会明显变少。" />
+    <section className="flex flex-col gap-4">
+      <SectionHead
+        title="模型服务"
+        note="先添加厂商账户与模型,再把不同服务绑定到合适的模型。密钥只写入本机服务端。"
+      />
 
       <div className="rounded-xl border border-hair px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <span
-              className={`h-2 w-2 rounded-full ${connected ? "bg-accent" : "bg-warm"}`}
-              aria-hidden="true"
-            />
-            <div>
-              <p className="text-[13px] text-ink">
-                {connected ? "已接入模型" : "未接入模型"}
-              </p>
-              <p className="mt-0.5 font-mono text-[10.5px] text-ink-4">
-                {connected
-                  ? (caps?.llmModel ?? "模型名未知")
-                  : "关系判定会退回启发式规则,界面会如实标注"}
-              </p>
-            </div>
+          <div>
+            <p className="text-[13px] text-ink">当前能力</p>
+            <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">
+              关系判定：{caps?.llmModel ?? "未配置"} · 问答：
+              {caps?.askModel ?? "未配置"} ·{" "}
+              {caps?.vision ? "视觉输入可用" : "视觉输入未配置"}
+            </p>
           </div>
-
           <div className="flex items-center gap-2">
-            <GhostButton size="sm" onClick={() => void run()} disabled={testing || !connected}>
-              {testing ? "自检中…" : "测试连接"}
-            </GhostButton>
-            <GhostButton size="sm" onClick={() => setShowConfig((v) => !v)}>
-              {open && connected ? "收起配置" : "怎么配置"}
+            {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
+            <GhostButton size="sm" active={dirty} onClick={() => void save()} disabled={!dirty || saving}>
+              {saving ? "保存中…" : "保存模型设置"}
             </GhostButton>
           </div>
         </div>
-
-        {health ? (
-          <div
-            className={`mt-3.5 rounded-lg border px-3.5 py-2.5 ${
-              health.ok ? "border-accent/35" : "border-warm/40"
-            }`}
-          >
-            {health.ok ? (
-              <p className="text-[11.5px] text-ink-2">
-                模型正常响应 · {health.model} · 往返 {health.latencyMs} ms
-                {health.answer ? ` · 探针回答「${health.answer}」` : ""}
-              </p>
-            ) : (
-              <>
-                <p className="text-[11.5px] text-warm">{health.error}</p>
-                {health.hint ? (
-                  <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">{health.hint}</p>
-                ) : null}
-              </>
-            )}
-          </div>
+        {!settings?.accounts.length ? (
+          <p className="mt-3 rounded-lg border border-warm/30 px-3 py-2 text-[10.5px] leading-relaxed text-warm">
+            尚未添加厂商账户。当前可回退到环境变量配置；添加账户后可分别绑定关系判定、多模态问答与翻译模型。
+          </p>
         ) : null}
-
-        {open ? (
-          <div className="mt-4 border-t border-hair pt-4">
-            <p className="text-[11.5px] leading-[1.9] text-ink-3">
-              在项目根目录建一个{" "}
-              <code className="font-mono text-ink-2">.env.local</code>,填三行即可,
-              然后重启服务。任何 OpenAI 兼容的接口都能用 —— 换供应商只改地址和模型名,代码不用动。
-            </p>
-            <pre className="mt-3 overflow-x-auto rounded-lg bg-hair/50 px-3.5 py-3 font-mono text-[10.5px] leading-relaxed text-ink-2">
-{`LLM_API_KEY=你的密钥
-LLM_BASE_URL=https://api.deepseek.com/v1
-LLM_MODEL=deepseek-chat`}
-            </pre>
-            <p className="mt-3 text-[11px] leading-relaxed text-ink-4">
-              这个文件已经被 <code className="font-mono">.gitignore</code> 忽略,不会被提交。
-              结构层的引用、作者、发表信息来自 OpenAlex 与 arXiv,不消耗任何模型额度。
-            </p>
-          </div>
-        ) : null}
+        {error ? <p className="mt-3 text-[11px] text-alert">{error}</p> : null}
       </div>
+
+      <div className="flex flex-wrap items-end gap-2 rounded-xl border border-hair px-5 py-4">
+        <label className="min-w-[220px] flex-1">
+          <span className="mb-1.5 block text-[10px] tracking-[0.1em] text-ink-4">
+            添加厂商账户
+          </span>
+          <select
+            value={providerDraft}
+            onChange={(e) => setProviderDraft(e.target.value as ModelProviderId)}
+            className="w-full rounded-lg border border-hair-2 bg-bg/40 px-3 py-2 text-[12px] text-ink outline-none focus:border-accent/45"
+          >
+            {PROVIDER_PRESETS.map((provider) => (
+              <option key={provider.id} value={provider.id}>
+                {provider.label} · {provider.note}
+              </option>
+            ))}
+          </select>
+        </label>
+        <GhostButton size="sm" onClick={addAccount} disabled={!settings}>
+          添加账户
+        </GhostButton>
+      </div>
+
+      {settings === null ? (
+        <p className="text-[12px] text-ink-4">正在读取模型设置…</p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {settings.accounts.map((account) => (
+            <AccountCard
+              key={account.id}
+              account={account}
+              models={settings.models.filter((model) => model.accountId === account.id)}
+              health={health}
+              testingId={testingId}
+              testDisabled={dirty}
+              onChange={(patch) => updateAccount(account.id, patch)}
+              onRemove={() => removeAccount(account.id)}
+              onAddModel={() => addModel(account.id)}
+              onModelChange={updateModel}
+              onModelRemove={removeModel}
+              onTest={(id) => void testModel(id)}
+            />
+          ))}
+        </div>
+      )}
+
+      {settings ? (
+        <div className="rounded-xl border border-hair px-5 py-4">
+          <SectionHead
+            title="服务绑定"
+            note="问答服务只显示支持图像输入的模型；未绑定某项服务时回退环境变量。"
+          />
+          <div className="mt-4 flex flex-col divide-y divide-hair">
+            {MODEL_SERVICES.map((service) => {
+              const candidates = service.requiresVision ? visionModels : usableModels;
+              return (
+                <ServiceBinding
+                  key={service.id}
+                  label={service.label}
+                  note={service.note}
+                  value={settings.services[service.id]}
+                  models={candidates}
+                  onChange={(id) =>
+                    change((current) => ({
+                      ...current,
+                      services: { ...current.services, [service.id]: id || null },
+                    }))
+                  }
+                />
+              );
+            })}
+          </div>
+          {!visionModels.length ? (
+            <p className="mt-3 text-[10.5px] leading-relaxed text-warm">
+              还没有视觉模型。请给某个模型勾选“图像”，才能用于多模态文献问答。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
+}
+
+function AccountCard({
+  account,
+  models,
+  health,
+  testingId,
+  testDisabled,
+  onChange,
+  onRemove,
+  onAddModel,
+  onModelChange,
+  onModelRemove,
+  onTest,
+}: {
+  account: ProviderAccountDto;
+  models: ModelSettingsDto["models"];
+  health: Record<string, LlmHealth>;
+  testingId: string | null;
+  testDisabled: boolean;
+  onChange: (patch: Partial<ProviderAccountDto>) => void;
+  onRemove: () => void;
+  onAddModel: () => void;
+  onModelChange: (id: string, patch: Partial<ModelSettingsDto["models"][number]>) => void;
+  onModelRemove: (id: string) => void;
+  onTest: (id: string) => void;
+}) {
+  const preset = providerPreset(account.provider);
+  return (
+    <div className="rounded-xl border border-hair px-5 py-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[13px] text-ink">{preset.label}</p>
+          <p className="mt-0.5 text-[10px] text-ink-4">
+            {account.hasApiKey ? `密钥 ${account.apiKeyHint ?? "已保存"}` : "尚未保存密钥"}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="text-[10.5px] text-ink-4 transition-colors hover:text-alert"
+        >
+          移除账户
+        </button>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <label>
+          <span className="mb-1 block text-[10px] text-ink-4">账户名称</span>
+          <input
+            value={account.name}
+            onChange={(e) => onChange({ name: e.target.value })}
+            className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 text-[11.5px] text-ink outline-none focus:border-accent/45"
+          />
+        </label>
+        <label>
+          <span className="mb-1 block text-[10px] text-ink-4">API Key</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={account.apiKey ?? ""}
+            onChange={(e) =>
+              onChange({
+                apiKey: e.target.value,
+                hasApiKey: Boolean(e.target.value) || account.hasApiKey,
+              })
+            }
+            placeholder={account.hasApiKey ? "留空则保留现有密钥" : "输入厂商 API Key"}
+            className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
+          />
+        </label>
+        <label className="col-span-2">
+          <span className="mb-1 block text-[10px] text-ink-4">API Base URL</span>
+          <input
+            value={account.baseUrl}
+            onChange={(e) => onChange({ baseUrl: e.target.value })}
+            placeholder="https://…/v1"
+            className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
+          />
+        </label>
+      </div>
+
+      <div className="mt-4 border-t border-hair pt-3">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] tracking-[0.1em] text-ink-4">模型清单</p>
+          <button
+            type="button"
+            onClick={onAddModel}
+            className="text-[10.5px] text-accent transition-colors hover:text-accent/80"
+          >
+            + 添加模型
+          </button>
+        </div>
+        <div className="mt-2 flex flex-col gap-2">
+          {models.map((model) => {
+            const result = health[model.id];
+            return (
+              <div key={model.id} className="rounded-lg bg-hair/20 px-3 py-2.5">
+                <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                  <label>
+                    <span className="mb-1 block text-[9.5px] text-ink-4">显示名</span>
+                    <input
+                      value={model.name}
+                      onChange={(e) => onModelChange(model.id, { name: e.target.value })}
+                      className="w-full rounded border border-hair px-2 py-1.5 text-[10.5px] text-ink-2 outline-none focus:border-accent/45"
+                    />
+                  </label>
+                  <label>
+                    <span className="mb-1 block text-[9.5px] text-ink-4">模型 ID</span>
+                    <input
+                      value={model.model}
+                      onChange={(e) => onModelChange(model.id, { model: e.target.value })}
+                      placeholder={preset.models[0]?.model ?? "model-id"}
+                      className="w-full rounded border border-hair px-2 py-1.5 font-mono text-[10px] text-ink-2 outline-none focus:border-accent/45"
+                    />
+                  </label>
+                  <div className="flex items-center gap-2 pb-1">
+                    {(["text", "vision"] as ModelModality[]).map((modality) => (
+                      <label key={modality} className="flex items-center gap-1 text-[9.5px] text-ink-4">
+                        <input
+                          type="checkbox"
+                          checked={model.modalities.includes(modality)}
+                          onChange={(e) => {
+                            const next = e.target.checked
+                              ? [...new Set([...model.modalities, modality])]
+                              : model.modalities.filter((item) => item !== modality);
+                            onModelChange(model.id, {
+                              modalities: next.length ? next : ["text"],
+                            });
+                          }}
+                        />
+                        {modality === "vision" ? "图像" : "文本"}
+                      </label>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => onTest(model.id)}
+                      disabled={testingId === model.id || testDisabled}
+                      title={testDisabled ? "请先保存模型设置" : "测试连通性"}
+                      className="rounded border border-hair-2 px-2 py-1 text-[9.5px] text-ink-3 transition-colors hover:text-ink"
+                    >
+                      {testingId === model.id ? "测试中" : "测试"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onModelRemove(model.id)}
+                      className="text-[10px] text-ink-4 hover:text-alert"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+                {result ? (
+                  <p className={`mt-1.5 text-[9.5px] ${result.ok ? "text-accent" : "text-warm"}`}>
+                    {result.ok
+                      ? `连接正常 · ${result.model} · ${result.latencyMs} ms`
+                      : result.error}
+                  </p>
+                ) : null}
+              </div>
+            );
+          })}
+          {!models.length ? (
+            <p className="text-[10.5px] text-ink-4">
+              还没有模型。添加模型并填写厂商提供的模型 ID。
+            </p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ServiceBinding({
+  label,
+  note,
+  value,
+  models,
+  onChange,
+}: {
+  label: string;
+  note: string;
+  value: string | null;
+  models: ModelSettingsDto["models"];
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-[180px_1fr] items-center gap-5 py-3 first:pt-0 last:pb-0">
+      <div>
+        <p className="text-[12px] text-ink-2">{label}</p>
+        <p className="mt-0.5 text-[9.5px] leading-relaxed text-ink-4">{note}</p>
+      </div>
+      <select
+        value={value ?? ""}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
+      >
+        <option value="">未绑定 · 使用环境变量回退</option>
+        {models.map((model) => (
+          <option key={model.id} value={model.id}>
+            {model.name} · {model.model}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function makeId(prefix: string): string {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
 // ---------------------------------------------------------------------------

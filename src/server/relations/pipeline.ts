@@ -572,7 +572,7 @@ export async function buildSemanticEdges(
     papers.map((w) => ({ id: w.id, text: documentOf(w.title, w.abstract) })),
   );
   const pairs = generatePairs(papers, textIndex);
-  const useLlm = llmAvailable();
+  const useLlm = await llmAvailable("relation");
 
   const edges: GraphEdge[] = [];
   const report: RelationReport = {

@@ -3,6 +3,14 @@
 export interface AskRequest {
   starfieldId: string;
   question: string;
+  image?: AskImage;
+}
+
+export interface AskImage {
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  /** 不含 data URL 前缀的 base64 */
+  data: string;
+  name: string;
 }
 
 export interface AskSource {

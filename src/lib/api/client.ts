@@ -14,6 +14,10 @@ import type {
   StarfieldPayload,
 } from "@/types/api";
 import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
+import type {
+  ModelSettingsDto,
+  SaveModelSettingsRequest,
+} from "@/types/model-settings";
 import type { AskEvent, AskRequest, AskSource, AskSuggestion } from "@/types/rag";
 import type { Starfield } from "@/types/starfield";
 
@@ -88,8 +92,24 @@ export interface LlmHealth {
  * 「密钥没配」是一种**正常的业务状态**,不是服务端故障,
  * 界面据 ok 字段渲染即可,不必区分 catch 与 success 两条路径。
  */
-export function testLlm(): Promise<LlmHealth> {
-  return request<LlmHealth>("/api/llm/health", { method: "POST" });
+export function testLlm(modelId?: string): Promise<LlmHealth> {
+  return request<LlmHealth>("/api/llm/health", {
+    method: "POST",
+    body: JSON.stringify({ modelId }),
+  });
+}
+
+export function getModelSettings(): Promise<ModelSettingsDto> {
+  return request<ModelSettingsDto>("/api/model-settings");
+}
+
+export function saveModelSettings(
+  settings: SaveModelSettingsRequest,
+): Promise<ModelSettingsDto> {
+  return request<ModelSettingsDto>("/api/model-settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
 }
 
 export function resolveSeed(query: string, knownPaperIds: string[] = []) {

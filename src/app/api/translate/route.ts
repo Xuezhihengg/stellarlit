@@ -34,7 +34,13 @@ export async function POST(req: Request): Promise<NextResponse<{ text: string } 
       ? "你是学术翻译。把用户给的论文摘要翻译成简体中文:保留术语、方法名与缩写(YOLO、mAP、R-CNN 等)不译;不要总结、不要补充原文没有的内容;只输出译文。"
       : "You are an academic translator. Translate the user's paper abstract into English. Keep method names and abbreviations as-is; do not summarize or add anything; output only the translation.";
 
-  const text = await chatText({ system, user: source, temperature: 0.2, maxTokens: 1800 });
+  const text = await chatText({
+    service: "translate",
+    system,
+    user: source,
+    temperature: 0.2,
+    maxTokens: 1800,
+  });
   if (!text) {
     return NextResponse.json(
       { error: "翻译服务暂不可用,请确认模型密钥与网络" },

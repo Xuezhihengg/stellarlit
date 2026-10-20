@@ -18,6 +18,17 @@ export const dynamic = "force-dynamic";
 const bodySchema = z.object({
   starfieldId: z.string().min(1),
   question: z.string().trim().min(2).max(500),
+  image: z
+    .object({
+      mimeType: z.enum(["image/jpeg", "image/png", "image/webp", "image/gif"]),
+      data: z
+        .string()
+        .min(1)
+        .max(8_000_000)
+        .regex(/^[A-Za-z0-9+/]+={0,2}$/, "图片内容不是有效的 base64"),
+      name: z.string().max(160),
+    })
+    .optional(),
 });
 
 /**
@@ -36,7 +47,7 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const { starfieldId, question } = parsed.data;
+  const { starfieldId, question, image } = parsed.data;
   const payload = await loadStarfield(starfieldId);
   if (!payload) {
     return NextResponse.json(
@@ -84,13 +95,27 @@ export async function POST(req: Request): Promise<Response> {
 
       const result = await streamChat(
         {
+          service: "ask",
           system: ASK_SYSTEM,
-          user: buildAskPrompt(question, sources),
+          user: buildAskPrompt(
+            question,
+            sources,
+            Boolean(image),
+          ),
           temperature: 0.3,
           maxTokens: 900,
+          image,
         },
         (text) => send({ type: "delta", text }),
       );
+
+      if (image && result.error) {
+        send({ type: "error", message: result.error });
+        send({ type: "done", citations: [] });
+        closed = true;
+        controller.close();
+        return;
+      }
 
       if (!result.ok || !result.text.trim()) {
         // 模型不可用:退回到"只列检索原文",并标注 fallback

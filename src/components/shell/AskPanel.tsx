@@ -6,7 +6,7 @@ import { Collapsible } from "@/components/ui/Collapsible";
 import { useAskHistory, type AskHistoryEntry } from "@/hooks/use-ask-history";
 import { askStarfield } from "@/lib/api/client";
 import type { StarfieldPayload } from "@/types/api";
-import type { AskSource, AskSuggestion } from "@/types/rag";
+import type { AskImage, AskSource, AskSuggestion } from "@/types/rag";
 
 interface AskPanelProps {
   payload: StarfieldPayload;
@@ -40,12 +40,16 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
   const [error, setError] = useState<string | null>(null);
   const [activeCitation, setActiveCitation] = useState<number | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [image, setImage] = useState<AskImage | null>(null);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
   const [replayedAnswer, setReplayedAnswer] = useState<{
     createdAt: number;
     nonce: number;
   } | null>(null);
   const { history, add: addHistory } = useAskHistory(payload.starfield.id);
   const abortRef = useRef<AbortController | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
   const historyListRef = useRef<HTMLDivElement | null>(null);
   const replayNonceRef = useRef(0);
   /** 角标 → 依据卡片:点击角标时滚到那张卡并高亮 */
@@ -65,6 +69,9 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setActiveCitation(null);
     setHistoryOpen(false);
     setReplayedAnswer(null);
+    setImage(null);
+    setImageError(null);
+    setImageLoading(false);
   }, [payload.starfield.id]);
 
   // 最新记录放在底部:每次展开历史都直接定位到今天最关心的一条
@@ -99,7 +106,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setReplayedAnswer(null);
 
     void askStarfield(
-      { starfieldId: payload.starfield.id, question: q },
+      { starfieldId: payload.starfield.id, question: q, image: image ?? undefined },
       {
         onSources: (nextSources) => {
           if (ac.signal.aborted) return;
@@ -125,6 +132,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
               citations: cited,
               suggestions: found,
               fallback: isFallback,
+              imageName: image?.name,
             });
           }
         },
@@ -162,10 +170,25 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setActiveCitation(null);
     setBusy(false);
     setHistoryOpen(false);
+    setImage(null);
+    setImageError(null);
     setReplayedAnswer({
       createdAt: entry.createdAt,
       nonce: replayNonceRef.current,
     });
+  };
+
+  const chooseImage = async (file: File | undefined) => {
+    if (!file) return;
+    setImageLoading(true);
+    setImageError(null);
+    try {
+      setImage(await readAskImage(file));
+    } catch (e) {
+      setImageError(e instanceof Error ? e.message : "无法读取这张图片");
+    } finally {
+      setImageLoading(false);
+    }
   };
 
   /** 点 [n]:聚焦对应论文,并把那张依据卡滚进视野、标亮 */
@@ -239,6 +262,11 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
                         {formatHistoryTime(entry.createdAt)}
                       </time>
                     </div>
+                    {entry.imageName ? (
+                      <p className="mt-1 truncate text-[9px] text-accent/70">
+                        图表附件 · {entry.imageName}
+                      </p>
+                    ) : null}
                     <p className="mt-1 line-clamp-2 text-[9.5px] leading-relaxed text-ink-4">
                       {entry.answer}
                     </p>
@@ -254,7 +282,55 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
         </div>
       </Collapsible>
 
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,image/gif"
+        className="hidden"
+        onChange={(e) => {
+          void chooseImage(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+
+      {image ? (
+        <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/5 p-2">
+          {/* 本地预览,不经过服务端 */}
+          <div
+            role="img"
+            aria-label="待分析的论文图表"
+            className="h-12 w-16 shrink-0 rounded bg-cover bg-center"
+            style={{
+              backgroundImage: `url(data:${image.mimeType};base64,${image.data})`,
+            }}
+          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[10.5px] text-ink-2">{image.name}</p>
+            <p className="mt-0.5 text-[9.5px] text-ink-4">将随问题发送给多模态问答模型</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setImage(null)}
+            className="shrink-0 text-[10px] text-ink-4 transition-colors hover:text-alert"
+          >
+            移除
+          </button>
+        </div>
+      ) : null}
+
+      {imageError ? (
+        <p className="mb-2 text-[10.5px] text-alert">{imageError}</p>
+      ) : null}
+
       <div className="flex items-center gap-2 rounded-lg border border-hair-2 bg-bg/40 px-2.5 py-1.5 focus-within:border-accent/45">
+        <button
+          type="button"
+          onClick={() => imageInputRef.current?.click()}
+          disabled={busy || imageLoading}
+          className="shrink-0 rounded-md border border-hair px-1.5 py-0.5 text-[9.5px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:border-hair-2 hover:text-ink-2 disabled:opacity-40"
+        >
+          {imageLoading ? "读取中…" : "图表"}
+        </button>
         <input
           value={question}
           onChange={(e) => setQuestion(e.target.value)}
@@ -407,6 +483,37 @@ function sectionLabel(section: AskSource["section"]): string {
   if (section === "relation") return "关系证据";
   if (section === "title") return "论文信息";
   return "摘要";
+}
+
+async function readAskImage(file: File): Promise<AskImage> {
+  const supported: AskImage["mimeType"][] = [
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+  ];
+  if (!supported.includes(file.type as AskImage["mimeType"])) {
+    throw new Error("请选择 JPG、PNG、WebP 或 GIF 图片");
+  }
+  if (file.size > 4 * 1024 * 1024) {
+    throw new Error("图片不能超过 4MB,请先压缩或裁剪");
+  }
+  const result = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("无法读取图片"));
+    };
+    reader.onerror = () => reject(new Error("无法读取图片"));
+    reader.readAsDataURL(file);
+  });
+  const data = result.split(",", 2)[1];
+  if (!data) throw new Error("图片内容为空");
+  return {
+    mimeType: file.type as AskImage["mimeType"],
+    data,
+    name: file.name.slice(0, 160),
+  };
 }
 
 function formatHistoryTime(timestamp: number): string {

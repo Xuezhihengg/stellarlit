@@ -27,7 +27,9 @@ export const ASK_SYSTEM = `你是「StellarLit 星图」的文献问答助手。
 6. 不要编造资料编号;通用知识部分不能伪装成资料引用。
 7. 用中文。总长不超过 300 字。
 8. 关系类问题优先使用"关系证据"块,并说明证据来自原文还是引文记录。
-9. 输出纯文本:不要使用 **、# 标题、表格等 Markdown 语法;需要列举时用「- 」开头。`;
+9. 输出纯文本:不要使用 **、# 标题、表格等 Markdown 语法;需要列举时用「- 」开头。
+10. 如果用户附了论文图表、截图或扫描页,把它当作图像证据一起分析;
+    明确指出从图中观察到的结构、数值或趋势,不要把看不清的细节猜成事实。`;
 
 const SuggestionSchema = z.object({
   papers: z
@@ -57,6 +59,7 @@ export async function extractSuggestions(
 ): Promise<AskSuggestion[]> {
   const res = await chatJson(
     {
+      service: "ask",
       system: `你是学术文献整理助手。从回答里找出被提到、但不在「已有论文」列表中的论文。
 只输出 JSON:{"papers":[{"title":"...","year":2019,"reason":"为什么相关"}]}
 规则:最多 4 篇;只列你确信真实存在的论文;标题用正式英文名;不要重复已有论文。
@@ -92,7 +95,11 @@ const SECTION_LABEL: Record<string, string> = {
   relation: "关系证据",
 };
 
-export function buildAskPrompt(question: string, sources: RetrievedSource[]): string {
+export function buildAskPrompt(
+  question: string,
+  sources: RetrievedSource[],
+  hasImage = false,
+): string {
   const blocks = sources.map((s, i) => {
     const meta = [
       `《${s.title}》`,
@@ -108,6 +115,7 @@ export function buildAskPrompt(question: string, sources: RetrievedSource[]): st
 ${blocks.join("\n\n")}
 </资料>
 
+${hasImage ? "用户同时附上了一张论文图表或截图,请结合图像与上述文字证据回答。\n" : ""}
 问题:${question}`;
 }
 

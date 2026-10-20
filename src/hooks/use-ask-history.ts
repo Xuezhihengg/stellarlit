@@ -13,6 +13,7 @@ export interface AskHistoryEntry {
   citations: number[];
   suggestions: AskSuggestion[];
   fallback: boolean;
+  imageName?: string;
 }
 
 type NewAskHistoryEntry = Omit<AskHistoryEntry, "id" | "createdAt">;
@@ -67,7 +68,8 @@ function isHistoryEntry(value: unknown): value is AskHistoryEntry {
     value.citations.every((n) => typeof n === "number") &&
     Array.isArray(value.suggestions) &&
     value.suggestions.every(isSuggestion) &&
-    typeof value.fallback === "boolean"
+    typeof value.fallback === "boolean" &&
+    (value.imageName === undefined || typeof value.imageName === "string")
   );
 }
 

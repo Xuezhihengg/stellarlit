@@ -1,7 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { Collapsible } from "@/components/ui/Collapsible";
+import { useAskHistory, type AskHistoryEntry } from "@/hooks/use-ask-history";
 import { askStarfield } from "@/lib/api/client";
 import type { StarfieldPayload } from "@/types/api";
 import type { AskSource, AskSuggestion } from "@/types/rag";
@@ -37,9 +39,26 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
   const [fallback, setFallback] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeCitation, setActiveCitation] = useState<number | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const { history, add: addHistory } = useAskHistory(payload.starfield.id);
   const abortRef = useRef<AbortController | null>(null);
   /** 角标 → 依据卡片:点击角标时滚到那张卡并高亮 */
   const sourceRefs = useRef(new Map<number, HTMLLIElement | null>());
+
+  // 问答和引用编号只对当前星空有意义,换星空时不能把上一份答案带过去
+  useEffect(() => {
+    abortRef.current?.abort();
+    setQuestion("");
+    setAnswer("");
+    setSources([]);
+    setCitations([]);
+    setSuggestions([]);
+    setBusy(false);
+    setFallback(false);
+    setError(null);
+    setActiveCitation(null);
+    setHistoryOpen(false);
+  }, [payload.starfield.id]);
 
   const submit = (text: string) => {
     const q = text.trim();
@@ -48,6 +67,8 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
+    let answerText = "";
+    let receivedSources: AskSource[] = [];
 
     setBusy(true);
     setAnswer("");
@@ -57,19 +78,40 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     setFallback(false);
     setError(null);
     setActiveCitation(null);
+    setHistoryOpen(false);
 
     void askStarfield(
       { starfieldId: payload.starfield.id, question: q },
       {
-        onSources: setSources,
-        onDelta: (delta) => setAnswer((prev) => prev + delta),
+        onSources: (nextSources) => {
+          if (ac.signal.aborted) return;
+          receivedSources = nextSources;
+          setSources(nextSources);
+        },
+        onDelta: (delta) => {
+          if (ac.signal.aborted) return;
+          answerText += delta;
+          setAnswer(answerText);
+        },
         onDone: (cited, isFallback, found) => {
+          if (ac.signal.aborted) return;
           setCitations(cited);
           setFallback(isFallback);
           setSuggestions(found);
           setBusy(false);
+          if (answerText.trim()) {
+            addHistory({
+              question: q,
+              answer: answerText,
+              sources: receivedSources,
+              citations: cited,
+              suggestions: found,
+              fallback: isFallback,
+            });
+          }
         },
         onError: (message) => {
+          if (ac.signal.aborted) return;
           setError(message);
           setBusy(false);
         },
@@ -88,6 +130,20 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     .filter((s): s is AskSource => Boolean(s));
   const shownSources = citedSources.length ? citedSources : sources.slice(0, 4);
 
+  const showHistoryEntry = (entry: AskHistoryEntry) => {
+    abortRef.current?.abort();
+    setQuestion(entry.question);
+    setAnswer(entry.answer);
+    setSources(entry.sources);
+    setCitations(entry.citations);
+    setSuggestions(entry.suggestions);
+    setFallback(entry.fallback);
+    setError(null);
+    setActiveCitation(null);
+    setBusy(false);
+    setHistoryOpen(false);
+  };
+
   /** 点 [n]:聚焦对应论文,并把那张依据卡滚进视野、标亮 */
   const cite = (n: number) => {
     const source = sources.find((s) => s.n === n);
@@ -99,6 +155,78 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
 
   return (
     <section className="rounded-xl border border-hair bg-hair/15 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <span className="font-mono text-[9.5px] tracking-[0.12em] text-ink-4">
+          检索增强问答
+        </span>
+        <button
+          type="button"
+          onClick={() => setHistoryOpen((open) => !open)}
+          aria-expanded={historyOpen}
+          className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] text-ink-4 transition-colors duration-[var(--dur-fast)] hover:text-ink-2"
+        >
+          历史问答
+          {history.length ? (
+            <span className="font-mono text-[9px] text-ink-4">{history.length}</span>
+          ) : null}
+          <svg
+            width="8"
+            height="8"
+            viewBox="0 0 10 10"
+            aria-hidden="true"
+            className={`transition-transform duration-[var(--dur-fast)] ${historyOpen ? "rotate-180" : ""}`}
+            style={{ transitionTimingFunction: "var(--ease-out)" }}
+          >
+            <path
+              d="M2 3.8 L5 6.6 L8 3.8"
+              stroke="currentColor"
+              strokeWidth="1.3"
+              fill="none"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      </div>
+
+      <Collapsible open={historyOpen} className="mb-2">
+        <div className="max-h-60 overflow-y-auto rounded-lg border border-hair bg-bg/35">
+          {history.length ? (
+            <ul className="divide-y divide-hair">
+              {history.map((entry) => (
+                <li key={entry.id}>
+                  <button
+                    type="button"
+                    onClick={() => showHistoryEntry(entry)}
+                    aria-label={`查看历史问答:${entry.question}`}
+                    className="w-full px-2.5 py-2 text-left transition-colors duration-[var(--dur-fast)] hover:bg-hair/35"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="line-clamp-2 text-[10.5px] leading-relaxed text-ink-2">
+                        {entry.question}
+                      </span>
+                      <time
+                        dateTime={new Date(entry.createdAt).toISOString()}
+                        className="shrink-0 font-mono text-[9px] text-ink-4"
+                      >
+                        {formatHistoryTime(entry.createdAt)}
+                      </time>
+                    </div>
+                    <p className="mt-1 line-clamp-2 text-[9.5px] leading-relaxed text-ink-4">
+                      {entry.answer}
+                    </p>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="px-2.5 py-3 text-[10.5px] text-ink-4">
+              还没有历史问答。完成一次提问后会保存在这里。
+            </p>
+          )}
+        </div>
+      </Collapsible>
+
       <div className="flex items-center gap-2 rounded-lg border border-hair-2 bg-bg/40 px-2.5 py-1.5 focus-within:border-accent/45">
         <input
           value={question}
@@ -242,6 +370,15 @@ function sectionLabel(section: AskSource["section"]): string {
   if (section === "relation") return "关系证据";
   if (section === "title") return "论文信息";
   return "摘要";
+}
+
+function formatHistoryTime(timestamp: number): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(timestamp);
 }
 
 /**

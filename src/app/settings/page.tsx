@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { SecondaryPage } from "@/components/shell/SecondaryPage";
 import { GhostButton } from "@/components/ui/GhostButton";
+import { SelectMenu } from "@/components/ui/SelectMenu";
 import {
-  fetchCapabilities,
   fetchPresets,
   getModelSettings,
   saveModelSettings,
@@ -19,7 +19,6 @@ import {
   mergePresets,
   savePresetOverrides,
 } from "@/lib/presets/local";
-import type { CapabilityReport } from "@/types/api";
 import type { RelationPreset } from "@/types/kg";
 import type {
   ModelModality,
@@ -38,7 +37,6 @@ import type {
 export default function SettingsPage() {
   const [presets, setPresets] = useState<RelationPreset[] | null>(null);
   const [baseline, setBaseline] = useState<RelationPreset[]>([]);
-  const [caps, setCaps] = useState<CapabilityReport | null>(null);
   const [dirty, setDirty] = useState(false);
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<"models" | "relations" | "privacy">(
@@ -48,10 +46,9 @@ export default function SettingsPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const [builtin, capability] = await Promise.all([fetchPresets(), fetchCapabilities()]);
+        const builtin = await fetchPresets();
         setBaseline(builtin);
         setPresets(mergePresets(builtin, loadPresetOverrides()));
-        setCaps(capability);
       } catch {
         setPresets([]);
       }
@@ -108,7 +105,6 @@ export default function SettingsPage() {
   return (
     <SecondaryPage
       title="设置"
-      subtitle="配置多厂商模型账户、为不同服务绑定模型,并维护论文关系判定规则。"
       actions={
         activeSection === "relations" ? (
           <div className="flex items-center gap-2">
@@ -125,8 +121,8 @@ export default function SettingsPage() {
         ) : null
       }
     >
-      <div className="grid grid-cols-[188px_minmax(0,1fr)] items-start gap-10">
-        <aside className="sticky top-8 flex flex-col gap-1 border-r border-hair pr-5">
+      <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-[188px_minmax(0,1fr)] lg:gap-10">
+        <aside className="flex flex-row flex-wrap gap-1 border-b border-hair pb-4 lg:sticky lg:top-8 lg:flex-col lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5">
           {[
             ["models", "模型服务", "厂商、模型与能力"],
             ["relations", "关系判定", "图谱语义规则"],
@@ -153,12 +149,7 @@ export default function SettingsPage() {
 
         <div className="min-w-0">
           {activeSection === "models" ? (
-            <ModelSection
-              caps={caps}
-              onSaved={() => {
-                void fetchCapabilities().then(setCaps).catch(() => undefined);
-              }}
-            />
+            <ModelSection />
           ) : null}
 
           {activeSection === "relations" ? (
@@ -217,13 +208,7 @@ export default function SettingsPage() {
 // 模型
 // ---------------------------------------------------------------------------
 
-function ModelSection({
-  caps,
-  onSaved,
-}: {
-  caps: CapabilityReport | null;
-  onSaved: () => void;
-}) {
+function ModelSection() {
   const [settings, setSettings] = useState<ModelSettingsDto | null>(null);
   const [providerDraft, setProviderDraft] = useState<ModelProviderId>("openai");
   const [dirty, setDirty] = useState(false);
@@ -380,7 +365,6 @@ function ModelSection({
         hour: "2-digit",
         minute: "2-digit",
       }));
-      onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : "保存模型设置失败");
     } finally {
@@ -399,56 +383,52 @@ function ModelSection({
 
   return (
     <section className="flex flex-col gap-4">
-      <SectionHead
-        title="模型服务"
-        note="先添加厂商账户与模型,再把不同服务绑定到合适的模型。密钥只写入本机服务端。"
-      />
-
-      <div className="rounded-xl border border-hair px-5 py-4">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-[13px] text-ink">当前能力</p>
-            <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">
-              关系判定：{caps?.llmModel ?? "未配置"} · 问答：
-              {caps?.askModel ?? "未配置"} ·{" "}
-              {caps?.vision ? "视觉输入可用" : "视觉输入未配置"}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
-            <GhostButton size="sm" active={dirty} onClick={() => void save()} disabled={!dirty || saving}>
-              {saving ? "保存中…" : "保存模型设置"}
-            </GhostButton>
-          </div>
+      <div className="flex items-start justify-between gap-5">
+        <SectionHead
+          title="模型服务"
+          note="添加服务商和模型,再把不同服务绑定到合适的模型。"
+        />
+        <div className="flex shrink-0 items-center gap-2">
+          {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
+          <GhostButton size="sm" active={dirty} onClick={() => void save()} disabled={!dirty || saving}>
+            {saving ? "保存中…" : "保存模型设置"}
+          </GhostButton>
         </div>
-        {!settings?.accounts.length ? (
-          <p className="mt-3 rounded-lg border border-warm/30 px-3 py-2 text-[10.5px] leading-relaxed text-warm">
-            尚未添加厂商账户。当前可回退到环境变量配置；添加账户后可分别绑定关系判定、多模态问答与翻译模型。
-          </p>
-        ) : null}
-        {error ? <p className="mt-3 text-[11px] text-alert">{error}</p> : null}
       </div>
 
-      <div className="flex flex-wrap items-end gap-2 rounded-xl border border-hair px-5 py-4">
-        <label className="min-w-[220px] flex-1">
-          <span className="mb-1.5 block text-[10px] tracking-[0.1em] text-ink-4">
-            添加厂商账户
-          </span>
-          <select
-            value={providerDraft}
-            onChange={(e) => setProviderDraft(e.target.value as ModelProviderId)}
-            className="w-full rounded-lg border border-hair-2 bg-bg/40 px-3 py-2 text-[12px] text-ink outline-none focus:border-accent/45"
-          >
-            {PROVIDER_PRESETS.map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.label} · {provider.note}
-              </option>
-            ))}
-          </select>
-        </label>
-        <GhostButton size="sm" onClick={addAccount} disabled={!settings}>
-          添加账户
-        </GhostButton>
+      {error ? <p className="text-[11px] text-alert">{error}</p> : null}
+
+      <div className="rounded-xl border border-hair px-5 py-4">
+        <p className="text-[11px] tracking-[0.08em] text-ink-3">添加服务商</p>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {PROVIDER_PRESETS.map((provider) => {
+            const active = providerDraft === provider.id;
+            return (
+              <button
+                key={provider.id}
+                type="button"
+                onClick={() => setProviderDraft(provider.id)}
+                aria-pressed={active}
+                className={`flex min-h-[78px] flex-col items-center justify-center gap-2 rounded-lg border px-2 py-3 text-center transition-colors duration-[var(--dur-fast)] ${
+                  active
+                    ? "border-accent/45 bg-accent/8 text-accent"
+                    : "border-hair text-ink-3 hover:border-hair-2 hover:bg-hair/25"
+                }`}
+              >
+                <ProviderMark provider={provider.id} />
+                <span className="text-[10px] leading-tight">{provider.label}</span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[10px] text-ink-4">
+            {providerPreset(providerDraft).note}
+          </p>
+          <GhostButton size="sm" onClick={addAccount} disabled={!settings}>
+            添加服务商
+          </GhostButton>
+        </div>
       </div>
 
       {settings === null ? (
@@ -551,13 +531,13 @@ function AccountCard({
           onClick={onRemove}
           className="text-[10.5px] text-ink-4 transition-colors hover:text-alert"
         >
-          移除账户
+          移除服务商
         </button>
       </div>
 
-      <div className="mt-4 grid grid-cols-2 gap-3">
+      <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
         <label>
-          <span className="mb-1 block text-[10px] text-ink-4">账户名称</span>
+          <span className="mb-1 block text-[10px] text-ink-4">服务商名称</span>
           <input
             value={account.name}
             onChange={(e) => onChange({ name: e.target.value })}
@@ -580,7 +560,7 @@ function AccountCard({
             className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
           />
         </label>
-        <label className="col-span-2">
+        <label className="md:col-span-2">
           <span className="mb-1 block text-[10px] text-ink-4">API Base URL</span>
           <input
             value={account.baseUrl}
@@ -607,7 +587,7 @@ function AccountCard({
             const result = health[model.id];
             return (
               <div key={model.id} className="rounded-lg bg-hair/20 px-3 py-2.5">
-                <div className="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
+                <div className="grid grid-cols-1 items-end gap-2 md:grid-cols-[1fr_1fr_auto]">
                   <label>
                     <span className="mb-1 block text-[9.5px] text-ink-4">显示名</span>
                     <input
@@ -696,24 +676,43 @@ function ServiceBinding({
   onChange: (id: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-[180px_1fr] items-center gap-5 py-3 first:pt-0 last:pb-0">
+    <div className="grid grid-cols-1 items-center gap-3 py-3 first:pt-0 last:pb-0 md:grid-cols-[180px_1fr] md:gap-5">
       <div>
         <p className="text-[12px] text-ink-2">{label}</p>
         <p className="mt-0.5 text-[9.5px] leading-relaxed text-ink-4">{note}</p>
       </div>
-      <select
+      <SelectMenu
         value={value ?? ""}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-lg border border-hair-2 bg-bg/35 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
-      >
-        <option value="">未绑定 · 使用环境变量回退</option>
-        {models.map((model) => (
-          <option key={model.id} value={model.id}>
-            {model.name} · {model.model}
-          </option>
-        ))}
-      </select>
+        onChange={onChange}
+        ariaLabel={`选择${label}模型`}
+        options={[
+          { value: "", label: "未绑定", note: "使用环境变量回退" },
+          ...models.map((model) => ({
+            value: model.id,
+            label: model.name,
+            note: model.model,
+          })),
+        ]}
+      />
     </div>
+  );
+}
+
+function ProviderMark({ provider }: { provider: ModelProviderId }) {
+  const mark: Record<ModelProviderId, string> = {
+    openai: "◎",
+    anthropic: "A",
+    deepseek: "D",
+    qwen: "Q",
+    custom: "+",
+  };
+  return (
+    <span
+      aria-hidden="true"
+      className="grid h-7 w-7 place-items-center rounded-full border border-current/25 bg-current/5 font-mono text-[12px] font-semibold"
+    >
+      {mark[provider]}
+    </span>
   );
 }
 

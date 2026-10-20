@@ -223,6 +223,15 @@ function ModelSection() {
   const [health, setHealth] = useState<Record<string, LlmHealth>>({});
   const [testingId, setTestingId] = useState<string | null>(null);
   const [modelModalAccountId, setModelModalAccountId] = useState<string | null>(null);
+  const [providerModalOpen, setProviderModalOpen] = useState(false);
+  const [providerForm, setProviderForm] = useState({
+    name: "",
+    apiKey: "",
+    baseUrl: "",
+    modelIds: [] as string[],
+    customModel: "",
+    customModelName: "",
+  });
 
   useEffect(() => {
     void getModelSettings()
@@ -236,21 +245,57 @@ function ModelSection() {
     setSavedAt(null);
   };
 
+  const openProviderModal = () => {
+    const preset = providerPreset(providerDraft);
+    setProviderForm({
+      name: preset.label,
+      apiKey: "",
+      baseUrl: preset.baseUrl,
+      modelIds: preset.models[0] ? [preset.models[0].model] : [],
+      customModel: "",
+      customModelName: "",
+    });
+    setProviderModalOpen(true);
+  };
+
   const addAccount = () => {
+    if (!settings || !providerForm.name.trim() || !providerForm.baseUrl.trim()) return;
     const preset = providerPreset(providerDraft);
     const accountId = makeId("account");
     const account: ProviderAccountDto = {
       id: accountId,
       provider: providerDraft,
-      name: preset.label,
-      baseUrl: preset.baseUrl,
-      hasApiKey: false,
-      apiKey: "",
+      name: providerForm.name.trim(),
+      baseUrl: providerForm.baseUrl.trim().replace(/\/+$/, ""),
+      hasApiKey: Boolean(providerForm.apiKey.trim()),
+      apiKey: providerForm.apiKey.trim(),
     };
-    change((current) => ({
-      ...current,
-      accounts: [...current.accounts, account],
-    }));
+    const addedModels: ModelSettingsDto["models"] = preset.models
+      .filter((model) => providerForm.modelIds.includes(model.model))
+      .map((model) => ({
+        id: makeId("model"),
+        accountId,
+        name: model.name,
+        model: model.model,
+        modalities: [...model.modalities],
+      }));
+    if (providerForm.customModel.trim()) {
+      addedModels.push({
+        id: makeId("model"),
+        accountId,
+        name: providerForm.customModelName.trim() || providerForm.customModel.trim(),
+        model: providerForm.customModel.trim(),
+        modalities: inferModelModalities(providerDraft, providerForm.customModel.trim()),
+      });
+    }
+    const next: ModelSettingsDto = {
+      ...settings,
+      accounts: [...settings.accounts, account],
+      models: [...settings.models, ...addedModels],
+    };
+    setSettings(next);
+    setProviderModalOpen(false);
+    void persistSettings(next);
   };
 
   const updateAccount = (id: string, patch: Partial<ProviderAccountDto>) => {
@@ -399,13 +444,16 @@ function ModelSection() {
       const account = settings.accounts.find((item) => item.id === model.accountId);
       return Boolean(account?.hasApiKey || account?.apiKey);
     }) ?? [];
+  const addProviderPreset = providerPreset(providerDraft);
+  const hasSelectedModels =
+    providerForm.modelIds.length > 0 || Boolean(providerForm.customModel.trim());
   return (
     <section className="flex flex-col gap-4">
       {error ? <p className="text-[11px] text-alert">{error}</p> : null}
 
       <div className="rounded-xl border border-hair px-5 py-4">
         <div className="flex items-center justify-between gap-3">
-          <h2 className="text-[18px] tracking-[0.02em] text-ink">添加服务商</h2>
+          <h2 className="text-[16px] font-medium tracking-[0.02em] text-ink">添加服务商</h2>
           {savedAt ? <span className="text-[10.5px] text-accent">{savedAt} 已保存</span> : null}
         </div>
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -430,7 +478,7 @@ function ModelSection() {
           })}
         </div>
         <div className="mt-3 flex justify-end">
-          <GhostButton size="sm" onClick={addAccount} disabled={!settings}>
+          <GhostButton size="sm" onClick={openProviderModal} disabled={!settings}>
             添加服务商
           </GhostButton>
         </div>
@@ -439,32 +487,42 @@ function ModelSection() {
       {settings === null ? (
         <p className="text-[12px] text-ink-4">正在读取模型设置…</p>
       ) : (
-        <div className="flex flex-col gap-3">
-          {settings.accounts.map((account) => (
-            <AccountCard
-              key={account.id}
-              account={account}
-              onChange={(patch) => updateAccount(account.id, patch)}
-              onRemove={() => removeAccount(account.id)}
-              models={settings.models.filter(
-                (model) => model.accountId === account.id,
-              )}
-              health={health}
-              testingId={testingId}
-              saving={saving}
-              dirty={dirty}
-              onSave={() => void saveCurrent()}
-              onAddModel={() => openModelModal(account)}
-              onModelRemove={removeModel}
-              onTest={(id) => void testModel(id)}
-            />
-          ))}
+        <div className="rounded-xl border border-hair px-5 py-4">
+          <h2 className="text-[16px] font-medium tracking-[0.02em] text-ink">
+            已保存服务商
+          </h2>
+          <div className="mt-3 flex flex-col gap-3">
+            {settings.accounts.map((account) => (
+              <AccountCard
+                key={account.id}
+                account={account}
+                onChange={(patch) => updateAccount(account.id, patch)}
+                onRemove={() => removeAccount(account.id)}
+                models={settings.models.filter(
+                  (model) => model.accountId === account.id,
+                )}
+                health={health}
+                testingId={testingId}
+                saving={saving}
+                dirty={dirty}
+                onSave={() => void saveCurrent()}
+                onAddModel={() => openModelModal(account)}
+                onModelRemove={removeModel}
+                onTest={(id) => void testModel(id)}
+              />
+            ))}
+            {!settings.accounts.length ? (
+              <p className="text-[11px] text-ink-4">暂无服务商</p>
+            ) : null}
+          </div>
         </div>
       )}
 
       {settings ? (
         <div className="rounded-xl border border-hair px-5 py-4">
-          <h2 className="text-[15px] text-ink">服务绑定</h2>
+          <h2 className="text-[16px] font-medium tracking-[0.02em] text-ink">
+            服务绑定
+          </h2>
           <div className="mt-4 flex flex-col divide-y divide-hair">
             {MODEL_SERVICES.map((service) => {
               return (
@@ -473,15 +531,177 @@ function ModelSection() {
                   label={service.label}
                   value={settings.services[service.id]}
                   models={usableModels}
-                  onChange={(id) =>
-                    change((current) => ({
-                      ...current,
-                      services: { ...current.services, [service.id]: id || null },
-                    }))
-                  }
+                  onChange={(id) => {
+                    const next: ModelSettingsDto = {
+                      ...settings,
+                      services: { ...settings.services, [service.id]: id || null },
+                    };
+                    setSettings(next);
+                    void persistSettings(next);
+                  }}
                 />
               );
             })}
+          </div>
+        </div>
+      ) : null}
+
+      {providerModalOpen ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/55 px-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setProviderModalOpen(false);
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`添加 ${addProviderPreset.label} 服务商`}
+            className="max-h-[88dvh] w-full max-w-[580px] overflow-y-auto rounded-2xl border border-hair-2 bg-bg p-5 shadow-[0_30px_90px_-30px_rgba(0,0,0,0.95)]"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="text-ink-2">
+                  <ProviderMark provider={providerDraft} />
+                </span>
+                <h2 className="text-[16px] font-medium text-ink">添加服务商</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProviderModalOpen(false)}
+                className="text-[11px] text-ink-4 hover:text-ink-2"
+              >
+                关闭
+              </button>
+            </div>
+
+            <div className="mt-4 flex flex-col gap-3">
+              <label>
+                <span className="mb-1.5 block text-[10px] text-ink-4">服务商名称</span>
+                <input
+                  value={providerForm.name}
+                  onChange={(event) =>
+                    setProviderForm((current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 text-[11.5px] text-ink outline-none focus:border-accent/45"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-[10px] text-ink-4">API Key</span>
+                <input
+                  type="password"
+                  autoComplete="off"
+                  value={providerForm.apiKey}
+                  onChange={(event) =>
+                    setProviderForm((current) => ({
+                      ...current,
+                      apiKey: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
+                />
+              </label>
+              <label>
+                <span className="mb-1.5 block text-[10px] text-ink-4">API Base URL</span>
+                <input
+                  value={providerForm.baseUrl}
+                  onChange={(event) =>
+                    setProviderForm((current) => ({
+                      ...current,
+                      baseUrl: event.target.value,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
+                />
+              </label>
+
+              <div>
+                <p className="mb-2 text-[10px] text-ink-4">模型清单</p>
+                <div className="flex flex-col gap-2">
+                  {addProviderPreset.models.map((model) => (
+                    <label
+                      key={model.model}
+                      className="flex items-center gap-3 rounded-lg border border-hair px-3 py-2"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={providerForm.modelIds.includes(model.model)}
+                        onChange={(event) =>
+                          setProviderForm((current) => ({
+                            ...current,
+                            modelIds: event.target.checked
+                              ? [...current.modelIds, model.model]
+                              : current.modelIds.filter(
+                                  (id) => id !== model.model,
+                                ),
+                          }))
+                        }
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[11px] text-ink-2">
+                          {model.name}
+                        </span>
+                        <span className="block font-mono text-[9.5px] text-ink-4">
+                          {model.model}
+                        </span>
+                      </span>
+                      <span className="text-[9.5px] text-ink-4">
+                        {model.modalities.includes("vision") ? "多模态" : "文本"}
+                      </span>
+                    </label>
+                  ))}
+                  {providerDraft === "custom" ? (
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        value={providerForm.customModel}
+                        onChange={(event) =>
+                          setProviderForm((current) => ({
+                            ...current,
+                            customModel: event.target.value,
+                          }))
+                        }
+                        placeholder="模型 ID"
+                        className="rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 font-mono text-[11px] text-ink outline-none focus:border-accent/45"
+                      />
+                      <input
+                        value={providerForm.customModelName}
+                        onChange={(event) =>
+                          setProviderForm((current) => ({
+                            ...current,
+                            customModelName: event.target.value,
+                          }))
+                        }
+                        placeholder="显示名"
+                        className="rounded-lg border border-hair-2 bg-hair/20 px-3 py-2 text-[11px] text-ink outline-none focus:border-accent/45"
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <GhostButton size="sm" onClick={() => setProviderModalOpen(false)}>
+                取消
+              </GhostButton>
+              <GhostButton
+                size="sm"
+                active
+                onClick={addAccount}
+                disabled={
+                  !providerForm.name.trim() ||
+                  !providerForm.baseUrl.trim() ||
+                  !hasSelectedModels ||
+                  saving
+                }
+              >
+                {saving ? "保存中…" : "确定"}
+              </GhostButton>
+            </div>
           </div>
         </div>
       ) : null}

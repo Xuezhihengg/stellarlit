@@ -1,0 +1,33 @@
+# 依赖与构建产物
+node_modules
+.next
+out
+build
+*.tsbuildinfo
+next-env.d.ts
+
+# 版本库与本地配置
+.git
+.gitignore
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+!.env.docker.example
+
+# 本机数据库与可重建缓存
+data/stellarlit.db
+data/stellarlit.db-shm
+data/stellarlit.db-wal
+data/cache
+data/image-index
+data/media
+data/model-settings.json
+
+# 部署时会挂载进容器
+compose.yaml
+
+# 本地临时文件
+*.tmp
+*.swp

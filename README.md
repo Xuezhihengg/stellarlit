@@ -95,7 +95,44 @@ Redis 不可用时会自动降级为直接读源,不会把站点打挂。
 预算,顶栏下拉与 `/account` 页面会显示已用与剩余;关系预设只保存在服务端,
 切换账号不会串。
 
-## 五、目录结构
+## 五、Docker 部署(服务器)
+
+服务器只需 Docker 24+ 与 Compose v2。镜像采用多阶段构建,运行态是 Next.js
+standalone,不携带源码与开发依赖;应用、PostgreSQL、Redis 由 Compose 一起编排。
+
+```bash
+git clone <仓库地址> stellarlit && cd stellarlit
+cp .env.docker.example .env
+openssl rand -hex 24      # 写入 POSTGRES_PASSWORD
+openssl rand -base64 32   # 写入 ENCRYPTION_KEY
+# 再填写 LLM_API_KEY / OPENALEX_MAILTO 等
+docker compose up -d --build
+docker compose logs -f app
+```
+
+打开 `http://<服务器IP>:3000` 并注册第一个账号。首次启动会自动建表,镜像里的
+演示星空会在数据卷为空时导入为 `legacy`,第一个注册账号会接管它。
+
+- 持久化:`postgres-data` 卷存数据库,`redis-data` 卷存缓存,宿主 `./data`
+  存媒体对象与磁盘缓存;重建镜像不会动这三处。
+- 反向代理:用 Nginx/Caddy 时把 `.env` 里的 `APP_BIND` 改为 `127.0.0.1`,
+  转发到容器 `3000`;必须透传 `X-Forwarded-Proto` 与 `X-Forwarded-For`,
+  否则登录 Cookie 的 Secure 判断和按 IP 限流会失真。
+- 流式问答走 SSE,Nginx 需要 `proxy_buffering off;` 与较长的
+  `proxy_read_timeout`,否则回答会攒到最后才一次性出现。
+- 更新:`git pull && docker compose up -d --build`。
+- 备份:数据库、`./data` 与 `.env` 里的 `ENCRYPTION_KEY` 必须一起备份;
+  主密钥丢失后,库里已加密的厂商 API Key 无法恢复。
+
+```bash
+docker compose exec -T postgres pg_dump -U stellarlit stellarlit > backup-$(date +%F).sql
+tar czf data-$(date +%F).tgz data
+```
+
+构建上下文已通过 `.dockerignore` 排除 `.env*`,密钥只在运行时经 `env_file`
+注入容器。
+
+## 六、目录结构
 
 ```
 src/
@@ -119,7 +156,7 @@ scripts/                 一次性与诊断脚本
 依赖方向单向:`types → lib → features → components → app`。
 反向依赖由 ESLint 的 `no-restricted-imports` 直接报错,不靠自觉。
 
-## 六、进度
+## 七、进度
 
 - [x] 知识图谱模型设计(三层图谱 + 证据链 + 关系预设)
 - [x] 工程骨架:Next.js 15 + TS strict + Tailwind v4 + ESLint 分层规则,构建与类型全绿
@@ -142,7 +179,7 @@ scripts/                 一次性与诊断脚本
   它要求两篇互不引用,而枢纽论文的邻域几乎都引用了它。这一条最可能在多篇种子之间出现。
 - 语义证据目前只能定位到摘要级别。全文切块接入后才会精确到章节与字符偏移。
 
-## 七、诊断工具
+## 八、诊断工具
 
 ```bash
 pnpm probe baseline 3      # 打印某一类关系的候选、完整提示词与模型原始回答
@@ -153,7 +190,7 @@ pnpm probe baseline 3      # 打印某一类关系的候选、完整提示词与
 因此看到的就是模型实际看到的东西。六类关系全部为零那次,就是靠它定位到
 「证据标准与可用数据不匹配」的。
 
-## 八、赛事合规
+## 九、赛事合规
 
 - 仓库保留完整的开发提交历史
 - 不提交任何 API Key;模型密钥按账号加密落库,主密钥只走环境变量(仓库内仅提供 `.env.example`)

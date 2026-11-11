@@ -151,7 +151,7 @@ async function matchByTitle(
       citations: 0,
       authors: e.authors.slice(0, 4),
       confidence: titleSimilarity(title, e.title),
-      reason: "arXiv 匹配(OpenAlex 不可用时的备份源;该源不提供被引量)",
+      reason: "arXiv 匹配",
       alreadyInStarfield: known.has(`paper:ARXIV:${e.arxivId}`),
     }));
   }

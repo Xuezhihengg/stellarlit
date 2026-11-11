@@ -17,6 +17,8 @@ export interface CapabilityReport {
   /** 当前问答服务是否绑定多模态模型 */
   vision?: boolean;
   askModel?: string | null;
+  /** 当前向量模型;未配置时为 null */
+  embeddingModel?: string | null;
 }
 
 export interface QualitySummaryDto {

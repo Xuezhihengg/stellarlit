@@ -1,170 +1,34 @@
-"use client";
+import { Workspace } from "@/components/home/Workspace";
 
-import { useCallback, useEffect, useState } from "react";
-
-import { AssistantRail } from "@/components/shell/AssistantRail";
-import { AccountMenu } from "@/components/shell/AccountMenu";
-import { BottomBar } from "@/components/shell/BottomBar";
-import { BrandMark } from "@/components/shell/BrandMark";
-import { QuotaNotice } from "@/components/shell/QuotaNotice";
-import { RelationLegend } from "@/components/shell/RelationLegend";
-import { SeedSearch } from "@/components/shell/SeedSearch";
-import { ThemeToggle } from "@/components/shell/ThemeToggle";
-import { TopBar } from "@/components/shell/TopBar";
-import { Metric } from "@/components/ui/Metric";
-import { StarfieldCanvas } from "@/components/star-map/StarfieldCanvas";
-import { StarMap } from "@/components/star-map/StarMap";
-import { useTheme } from "@/hooks/use-theme";
-import { useStarfieldStore } from "@/stores/starfield-store";
-import type { ViewLevel } from "@/types/starfield";
-
-/** 浮窗宽 372 + 右侧留白 16:星图自适应视角时要让出的宽度 */
-const RAIL_WIDTH = 388;
+export const dynamic = "force-dynamic";
 
 /**
- * 主界面。
+ * 站点入口。
  *
- * 这个文件的职责只有「组装」:把星空、图谱、外壳摆到位,把状态接上。
- * 任何一块逻辑长到需要解释时,它就该搬到 components/ 或 lib/ 里去 ——
- * 页面一旦变成逻辑的家,后面每次改动都要先读懂它。
+ * `/` 本身是公开的:未登录用户也应该先看到品牌与种子输入框,
+ * 而不是被直接甩到登录表单。是否登录交给客户端 workspace 判断,
+ * 真正需要账号的数据仍在各自的 API 路由里校验。
+ *
+ * `?starfield=` 是历史页与刷新恢复用的深链,直接以画布为初始视图,
+ * 避免先闪一下首页再切过去。
  */
-export default function StarfieldPage() {
-  const { theme, toggleTheme } = useTheme();
-
-  const payload = useStarfieldStore((s) => s.payload);
-  const selectedId = useStarfieldStore((s) => s.selectedId);
-  const dimmedKinds = useStarfieldStore((s) => s.dimmedKinds);
-  const minYear = useStarfieldStore((s) => s.minYear);
-  const phase = useStarfieldStore((s) => s.phase);
-  const query = useStarfieldStore((s) => s.query);
-  const setQuery = useStarfieldStore((s) => s.setQuery);
-  const search = useStarfieldStore((s) => s.search);
-  const setSelected = useStarfieldStore((s) => s.setSelected);
-  const toggleKind = useStarfieldStore((s) => s.toggleKind);
-  const setMinYear = useStarfieldStore((s) => s.setMinYear);
-  const loadCapabilities = useStarfieldStore((s) => s.loadCapabilities);
-  const loadById = useStarfieldStore((s) => s.loadById);
-
-  const [, setLevel] = useState<ViewLevel>("paper");
-  const [collapsed, setCollapsed] = useState(false);
-  const [focus, setFocus] = useState<{ ids: string[]; nonce: number } | null>(null);
-
-  useEffect(() => {
-    void loadCapabilities();
-  }, [loadCapabilities]);
-
-  /**
-   * 深链:`/?starfield=<id>` 直接打开某一片星空。
-   *
-   * 用 window.location 而不是 useSearchParams,是为了避免为了一个可选参数
-   * 把整页拖进 Suspense 边界。历史页跳转与演示时的截图直达都靠它。
-   */
-  useEffect(() => {
-    const id = new URLSearchParams(window.location.search).get("starfield");
-    if (id) void loadById(id);
-  }, [loadById]);
-
-  const focusPapers = useCallback(
-    (ids: string[]) => {
-      if (!ids.length) return;
-      setSelected(ids[0] ?? null);
-      setFocus({ ids, nonce: Date.now() });
-    },
-    [setSelected],
-  );
-
-  const focusPaper = useCallback(
-    (id: string) => focusPapers([id]),
-    [focusPapers],
-  );
-
-  const buildLabel =
-    phase === "resolving"
-      ? "正在解析这篇论文"
-      : phase === "growing"
-        ? "正在展开引文邻域"
-        : "准备中";
-
-  const lastSeedId = payload?.starfield.seeds.at(-1)?.paperId;
-  const lastSeed = lastSeedId
-    ? payload?.graph.nodes.find((n) => n.id === lastSeedId)
-    : undefined;
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
+  const starfield =
+    typeof params.starfield === "string" && params.starfield.trim()
+      ? params.starfield.trim()
+      : null;
+  const seed = typeof params.seed === "string" ? params.seed.slice(0, 300) : "";
 
   return (
-    <main className="relative h-dvh w-screen overflow-hidden">
-      <StarfieldCanvas theme={theme} density={payload ? 0.7 : 1} />
-
-      <StarMap
-        payload={payload}
-        selectedId={selectedId}
-        dimmedKinds={dimmedKinds}
-        minYear={minYear}
-        theme={theme}
-        rightInset={collapsed ? 0 : RAIL_WIDTH}
-        focus={focus}
-        onSelect={setSelected}
-        // 双击星星 = "我要看这篇的详情":侧栏收着就顺手打开
-        onStarDoubleClick={() => setCollapsed(false)}
-        // 侧栏开着时,单击直接聚焦(详情就在手边,不用再点一次按钮)
-        focusOnSelect={!collapsed}
-        onViewLevelChange={setLevel}
-      />
-
-      <QuotaNotice rightInset={collapsed ? 0 : RAIL_WIDTH} />
-
-      <TopBar
-        brand={<BrandMark />}
-        title={lastSeed?.kind === "paper" ? lastSeed.title : "还没有星空"}
-        search={
-          <SeedSearch
-            value={query}
-            busy={phase === "resolving" || phase === "growing"}
-            growing={Boolean(payload)}
-            bare
-            onChange={setQuery}
-            onSubmit={() => void search()}
-          />
-        }
-        right={
-          <>
-            {/* 指标是次要信息:窄屏让位给大标题与输入框 */}
-            {payload ? (
-              <div className="hidden items-center gap-4 min-[1400px]:flex">
-                <Metric label="篇论文" value={payload.graph.stats.papers} />
-                <Metric label="条关系" value={payload.graph.stats.byLayer.semantic} />
-                <Metric label="个前沿" value={payload.graph.stats.communities} />
-              </div>
-            ) : null}
-            <ThemeToggle theme={theme} onToggle={toggleTheme} />
-            <AccountMenu />
-          </>
-        }
-        rightInset={collapsed ? 0 : RAIL_WIDTH}
-      />
-
-      <AssistantRail
-        collapsed={collapsed}
-        onToggleCollapse={() => setCollapsed((c) => !c)}
-        onFocusPaper={focusPaper}
-        onFocusPapers={focusPapers}
-        buildLabel={buildLabel}
-      />
-
-      <BottomBar
-        payload={payload}
-        minYear={minYear}
-        rightInset={collapsed ? 0 : RAIL_WIDTH}
-        onMinYearChange={setMinYear}
-        legend={
-          payload ? (
-            <RelationLegend
-              payload={payload}
-              dimmedKinds={dimmedKinds}
-              onToggle={toggleKind}
-            />
-          ) : null
-        }
-      />
-    </main>
+    <Workspace
+      initialStarfieldId={starfield}
+      initialSeed={seed}
+      autoStart={params.auto === "1"}
+    />
   );
 }

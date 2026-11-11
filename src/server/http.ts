@@ -7,9 +7,7 @@
  */
 
 import { serverConfig } from "./config";
-
-/** 同一主机上一次请求的时间戳。模块级 Map 即可 —— 单进程内限速足够。 */
-const lastHitAt = new Map<string, number>();
+import { waitForHostSlot } from "./redis";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,10 +67,8 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<s
   let lastErr: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
-    const prev = lastHitAt.get(host) ?? 0;
-    const wait = minIntervalMs - (Date.now() - prev);
-    if (wait > 0) await sleep(wait);
-    lastHitAt.set(host, Date.now());
+    // Redis SET NX PX 做跨实例节流;Redis 不可用时退回有上限的进程内表
+    await waitForHostSlot(host, minIntervalMs);
 
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);

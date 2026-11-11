@@ -3,7 +3,16 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
+import { useSession } from "@/hooks/use-session";
+import { fetchUsage } from "@/lib/api/client";
+import { formatTokens } from "@/lib/format";
 import { useStarfieldStore } from "@/stores/starfield-store";
+import type { UsageSnapshotDto } from "@/types/account";
+
+function initialOf(name?: string): string {
+  const first = Array.from(name?.trim() ?? "")[0];
+  return first ? first.toUpperCase() : "·";
+}
 
 /**
  * 账户入口。
@@ -18,8 +27,24 @@ import { useStarfieldStore } from "@/stores/starfield-store";
  */
 export function AccountMenu() {
   const capabilities = useStarfieldStore((s) => s.capabilities);
+  const { user, signOut } = useSession();
   const [open, setOpen] = useState(false);
+  const [usage, setUsage] = useState<UsageSnapshotDto | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // 每次打开都取一次:用户刚问完问题,进度条应该立刻反映新的消耗
+  useEffect(() => {
+    if (!open || !user) return;
+    let cancelled = false;
+    void fetchUsage()
+      .then((next) => {
+        if (!cancelled) setUsage(next);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [open, user]);
 
   // 点外面或按 Esc 都要能关掉 —— 下拉菜单最常见的挫败感就是关不掉
   useEffect(() => {
@@ -54,15 +79,9 @@ export function AccountMenu() {
           open ? "border-accent/45 text-accent" : "border-hair-2 text-ink-3 hover:text-ink-2"
         }`}
       >
-        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <circle cx="8" cy="5.6" r="2.7" stroke="currentColor" strokeWidth="1.25" />
-          <path
-            d="M2.9 13.4c0-2.6 2.3-4.2 5.1-4.2s5.1 1.6 5.1 4.2"
-            stroke="currentColor"
-            strokeWidth="1.25"
-            strokeLinecap="round"
-          />
-        </svg>
+        <span aria-hidden="true" className="font-mono text-[11.5px] leading-none font-medium uppercase">
+          {initialOf(user?.name)}
+        </span>
         <span
           className={`absolute -right-0.5 -bottom-0.5 h-[7px] w-[7px] rounded-full border-2 border-bg ${
             llmReady ? "bg-accent" : "bg-warm"
@@ -71,52 +90,73 @@ export function AccountMenu() {
         />
       </button>
 
-      {open ? (
-        <div
-          role="menu"
-          className="absolute top-[calc(100%+14px)] right-0 w-[264px] overflow-hidden rounded-xl border border-hair-2 bg-surface/95 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.65)] backdrop-blur-md"
-        >
-          <div className="border-b border-hair px-4 py-3.5">
-            <div className="flex items-center gap-2.5">
-              <span className="grid h-7 w-7 place-items-center rounded-full border border-hair-2 text-ink-3">
-                <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <circle cx="8" cy="5.6" r="2.7" stroke="currentColor" strokeWidth="1.3" />
-                  <path
-                    d="M2.9 13.4c0-2.6 2.3-4.2 5.1-4.2s5.1 1.6 5.1 4.2"
-                    stroke="currentColor"
-                    strokeWidth="1.3"
-                    strokeLinecap="round"
-                  />
-                </svg>
-              </span>
-              <div className="min-w-0">
-                <p className="text-[12.5px] text-ink">本机账户</p>
-                <p className="font-mono text-[10px] text-ink-4">
-                  {capabilities?.llmModel ? `模型 ${capabilities.llmModel}` : "未接入模型"}
-                </p>
+      <div
+        role="menu"
+        aria-hidden={!open}
+        inert={!open}
+        className={`absolute top-[calc(100%+14px)] right-0 z-50 w-[264px] overflow-hidden rounded-xl border border-hair-2 bg-surface/95 shadow-[0_18px_50px_-18px_rgba(0,0,0,0.65)] backdrop-blur-md transition-opacity duration-[var(--dur-quick)] ease-out ${
+          open ? "opacity-100" : "pointer-events-none opacity-0"
+        }`}
+      >
+        <div className="border-b border-hair px-4 py-3.5">
+          <div className="flex items-center gap-2.5">
+            <span className="grid h-7 w-7 place-items-center rounded-full border border-hair-2 font-mono text-[11px] text-ink-3">
+              {initialOf(user?.name)}
+            </span>
+            <div className="min-w-0">
+              <p className="truncate text-[12.5px] text-ink">{user?.name ?? "未登录"}</p>
+              <p className="truncate font-mono text-[10px] text-ink-4">
+                {user?.email ?? (capabilities?.llmModel ? `模型 ${capabilities.llmModel}` : "未接入模型")}
+              </p>
+            </div>
+          </div>
+          {user && usage ? (
+            <div className="mt-3">
+              <div className="flex items-baseline justify-between gap-3 text-[9.5px] text-ink-4">
+                <span>今日 token</span>
+                <span className="font-mono">
+                  {formatTokens(usage.tokens)} / {formatTokens(usage.budget)}
+                </span>
+              </div>
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-hair">
+                <div
+                  className={`h-full rounded-full transition-[width] duration-500 ${
+                    usage.percent >= 100 ? "bg-alert/75" : "bg-accent/70"
+                  }`}
+                  style={{ width: `${Math.min(100, Math.max(0, usage.percent))}%` }}
+                />
               </div>
             </div>
-            <p className="mt-2 text-[10.5px] leading-relaxed text-ink-4">
-              这一版不需要登录:星空存在本机,只有论文标题与 ID 会发往 OpenAlex / arXiv。
-            </p>
-          </div>
-
-          <nav className="p-1.5">
-            <MenuLink href="/history" onSelect={() => setOpen(false)}>
-              历史星空
-            </MenuLink>
-            <MenuLink href="/settings" onSelect={() => setOpen(false)}>
-              设置
-            </MenuLink>
-          </nav>
-
-          <div className="border-t border-hair px-4 py-2.5">
-            <p className="font-mono text-[9.5px] tracking-[0.1em] text-ink-4 uppercase">
-              {llmReady ? "关系判定 · 模型" : "关系判定 · 启发式"}
-            </p>
-          </div>
+          ) : null}
         </div>
-      ) : null}
+
+        <nav className="p-1.5">
+          <MenuLink href="/account" onSelect={() => setOpen(false)}>
+            账号与用量
+          </MenuLink>
+          <MenuLink href="/history" onSelect={() => setOpen(false)}>
+            历史星空
+          </MenuLink>
+          <MenuLink href="/settings" onSelect={() => setOpen(false)}>
+            设置
+          </MenuLink>
+          {user ? (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                void signOut();
+              }}
+              className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[12.5px] text-ink-3 transition-colors duration-[var(--dur-fast)] hover:bg-hair hover:text-alert"
+            >
+              <span>退出登录</span>
+              <span className="font-mono text-[9px] text-ink-4">{initialOf(user.name)}</span>
+            </button>
+          ) : null}
+        </nav>
+
+      </div>
     </div>
   );
 }

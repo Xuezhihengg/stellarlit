@@ -5,6 +5,8 @@ interface GhostButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /** 选中态用强调色描边,不填充 —— 画面里唯一的"亮"要留给数据 */
   active?: boolean;
   size?: "sm" | "md";
+  /** 胶囊形用于全站默认;rect 用于弹窗底部这类需要更克制的地方 */
+  shape?: "pill" | "rect";
 }
 
 /**
@@ -17,6 +19,7 @@ export function GhostButton({
   children,
   active = false,
   size = "md",
+  shape = "pill",
   className = "",
   ...rest
 }: GhostButtonProps) {
@@ -25,11 +28,12 @@ export function GhostButton({
   const tone = active
     ? "border-accent/45 bg-accent/8 text-accent"
     : "border-hair-2 text-ink-3 hover:border-ink-4 hover:text-ink-2";
+  const radius = shape === "rect" ? "rounded-md" : "rounded-full";
 
   return (
     <button
       type="button"
-      className={`rounded-full border ${pad} ${tone} font-normal tracking-[0.04em] whitespace-nowrap transition-colors duration-[var(--dur-fast)] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
+      className={`${radius} border ${pad} ${tone} font-normal tracking-[0.04em] whitespace-nowrap transition-colors duration-[var(--dur-fast)] disabled:cursor-not-allowed disabled:opacity-40 ${className}`}
       {...rest}
     >
       {children}

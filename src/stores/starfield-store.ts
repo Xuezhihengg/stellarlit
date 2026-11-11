@@ -9,7 +9,6 @@ import {
   growStarfieldStream,
   resolveSeed,
 } from "@/lib/api/client";
-import { loadPresetOverrides } from "@/lib/presets/local";
 import type { CapabilityReport, StarfieldPayload } from "@/types/api";
 import type { SeedCandidate } from "@/types/starfield";
 
@@ -21,7 +20,14 @@ import type { SeedCandidate } from "@/types/starfield";
  * 放进 store 会让整棵子树跟着重渲染,而这正是 Canvas 方案要避免的开销。
  */
 
-export type BuildPhase = "idle" | "resolving" | "confirming" | "growing" | "ready" | "error";
+export type BuildPhase =
+  | "idle"
+  | "resolving"
+  | "confirming"
+  | "growing"
+  | "settling"
+  | "ready"
+  | "error";
 
 interface StarfieldState {
   payload: StarfieldPayload | null;
@@ -69,6 +75,39 @@ function toError(e: unknown): { message: string; hint?: string; code?: string } 
   return { message: e instanceof Error ? e.message : "未知错误" };
 }
 
+/** 构建完成后的收尾展示时长:让最后一层关系与统计停留一会儿,不要直接切到指南。 */
+const SETTLE_MS = 2_800;
+/** 解析请求本身可能几十毫秒就返回;给动画一个最短可见时间。 */
+const RESOLVE_MIN_MS = 1_000;
+
+let settleTimer: ReturnType<typeof setTimeout> | null = null;
+/**
+ * 当前这条异步链路的编号。
+ *
+ * 「新建星空」会在构建中途清空画布;如果旧请求的回调继续写 state,
+ * 刚清空的星空就会被旧结果重新填回来。所有异步写入口都先对编号,
+ * reset 时递增一次,旧回调自然失效。
+ */
+let flowId = 0;
+let growAbort: AbortController | null = null;
+
+function clearSettleTimer(): void {
+  if (!settleTimer) return;
+  clearTimeout(settleTimer);
+  settleTimer = null;
+}
+
+function beginFlow(): number {
+  growAbort?.abort();
+  growAbort = null;
+  flowId += 1;
+  return flowId;
+}
+
+function isCurrentFlow(id: number): boolean {
+  return id === flowId;
+}
+
 export const useStarfieldStore = create<StarfieldState>((set, get) => ({
   payload: null,
   phase: "idle",
@@ -82,7 +121,14 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
   streamProgress: null,
 
   setQuery: (q) => set({ query: q }),
-  setSelected: (id) => set({ selectedId: id }),
+  setSelected: (id) => {
+    // 用户主动点论文时,不必等收尾动画走完
+    clearSettleTimer();
+    set({
+      selectedId: id,
+      ...(get().phase === "settling" ? { phase: "ready", streamProgress: null } : {}),
+    });
+  },
 
   toggleKind: (kind) =>
     set((s) => {
@@ -106,7 +152,8 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
     }
   },
 
-  loadPayload: (payload) =>
+  loadPayload: (payload) => {
+    clearSettleTimer();
     set({
       payload,
       phase: "ready",
@@ -114,14 +161,19 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
       selectedId: null,
       candidates: [],
       minYear: null,
-    }),
+    });
+  },
 
   loadById: async (id) => {
+    const flow = beginFlow();
+    clearSettleTimer();
     set({ phase: "growing", error: null });
     try {
       const payload = await getStarfield(id);
+      if (!isCurrentFlow(flow)) return;
       set({ payload, phase: "ready", selectedId: null, candidates: [], minYear: null });
     } catch (e) {
+      if (!isCurrentFlow(flow)) return;
       set({ error: toError(e), phase: "idle" });
     }
   },
@@ -130,20 +182,31 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
     const { query, payload } = get();
     if (!query.trim()) return;
 
+    const flow = beginFlow();
+    clearSettleTimer();
     set({ phase: "resolving", error: null, candidates: [] });
+    const startedAt = Date.now();
     try {
       const known = payload
         ? payload.graph.nodes.filter((n) => n.kind === "paper").map((n) => n.id)
         : [];
       const { candidates } = await resolveSeed(query, known);
+      const wait = RESOLVE_MIN_MS - (Date.now() - startedAt);
+      if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+      if (!isCurrentFlow(flow)) return;
       set({ candidates, phase: "confirming" });
     } catch (e) {
+      if (!isCurrentFlow(flow)) return;
       set({ error: toError(e), phase: "error" });
     }
   },
 
   grow: async (seedPaperId, name) => {
     const { payload } = get();
+    const flow = beginFlow();
+    const abort = new AbortController();
+    growAbort = abort;
+    clearSettleTimer();
     set({ phase: "growing", error: null, candidates: [], streamProgress: null });
 
     /**
@@ -159,10 +222,10 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
         starfieldId: payload?.starfield.id,
         seedPaperId,
         name,
-        presets: loadPresetOverrides() ?? undefined,
       },
       {
         onStructure: ({ starfield, graph, layout }) => {
+          if (!isCurrentFlow(flow)) return;
           set({
             payload: {
               starfield,
@@ -174,6 +237,7 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
           });
         },
         onGraph: ({ graph, layout }) => {
+          if (!isCurrentFlow(flow)) return;
           const current = get().payload;
           if (!current) return;
           set({
@@ -185,7 +249,8 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
             },
           });
         },
-        onProgress: (p) =>
+        onProgress: (p) => {
+          if (!isCurrentFlow(flow)) return;
           set({
             streamProgress: {
               round: p.round,
@@ -194,20 +259,39 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
               matched: p.matched,
               llmCalls: p.llmCalls,
             },
-          }),
-        onDone: (done) => set({ payload: done, phase: "ready", streamProgress: null }),
-        onError: (message, code) =>
+          });
+        },
+        onDone: (done) => {
+          if (!isCurrentFlow(flow)) return;
+          clearSettleTimer();
+          // 保留 streamProgress:收尾阶段还要显示最后一层的数字
+          set({ payload: done, phase: "settling" });
+          settleTimer = setTimeout(() => {
+            settleTimer = null;
+            if (!isCurrentFlow(flow)) return;
+            if (get().phase !== "settling") return;
+            set({ phase: "ready", streamProgress: null });
+          }, SETTLE_MS);
+        },
+        onError: (message, code) => {
+          if (!isCurrentFlow(flow)) return;
+          clearSettleTimer();
           set({
             // 构建失败时回到 ready,而不是 error:老星空还在,用户不该被踢出画面
             phase: get().payload ? "ready" : "error",
             error: { message, code },
             streamProgress: null,
-          }),
+          });
+        },
       },
+      abort.signal,
     );
+    if (growAbort === abort) growAbort = null;
   },
 
-  reset: () =>
+  reset: () => {
+    beginFlow();
+    clearSettleTimer();
     set({
       payload: null,
       phase: "idle",
@@ -218,7 +302,8 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
       minYear: null,
       streamProgress: null,
       dimmedKinds: new Set<string>(["CITES"]),
-    }),
+    });
+  },
 }));
 
 function statsOf(graph: StarfieldPayload["graph"]) {

@@ -45,16 +45,16 @@ const JUDGE_CONCURRENCY = 4;
  * 而输入里真正随候选变化的只有两段摘要。
  *
  * 不设更大的原因:批越大,输出越长、越容易在中间截断或漏项,
- * 而一次失败要整批重来的代价也越高。5 是质量与成本之间的折中。
+ * 而一次失败要整批重来的代价也越高。4 是质量与成本之间的折中。
  */
-const JUDGE_BATCH = 5;
+const MULTI_BATCH = 4;
 
 /**
  * 送进提示词的摘要长度上限。
  *
  * 从 700 压到 400 的依据:论文摘要的第一段几乎总是"问题 + 方法 + 结果",
  * 而后面主要是实验细节与罗列 —— 判断"这两篇是什么关系"用不到那些。
- * 批量判定时这一项是输入 token 的主要来源(每批 5 对 = 10 段摘要),
+ * 批量判定时这一项是输入 token 的主要来源(每批 4 对 = 8 段摘要),
  * 砍掉 43% 直接反映在账单上,而判定质量在实测里没有可感知的变化。
  *
  * 逐条判定走同一个常量,保证两种路径看到的信息一致 ——
@@ -90,7 +90,7 @@ function makeEdge(
 }
 
 export interface RelationReport {
-  /** 每个预设:候选数 / 判定数 / 命中数 */
+  /** 每个预设:候选数 / 参与判定的论文对数 / 实际落边数 */
   perPreset: Record<
     string,
     { candidates: number; judged: number; matched: number; mode: "llm" | "heuristic" }
@@ -101,9 +101,9 @@ export interface RelationReport {
   llmCalls: number;
   /** 估算 token 用量(按字符数折算,用于横向比较不同策略的量级)。 */
   estimatedTokens: number;
-  /** 命中缓存、没有重复送审的论文对数 */
+  /** 这一对的全部可判关系都命中缓存、没有任何模型调用的论文对数 */
   cacheHits: number;
-  /** 整批解析失败、退回逐条判定的次数 */
+  /** 整批解析失败或批内漏项、退回逐对判定的次数 */
   batchFallbacks: number;
   /**
    * 本轮实际判定过的论文对(键 `${idA}|${idB}`,无序)。
@@ -113,7 +113,7 @@ export interface RelationReport {
   judgedPairs: string[];
 }
 
-/** 一对论文的判定结论。缓存与批处理共用这个形状。 */
+/** 单条关系的判定结论。多标签判定在它上面加上 relationId。 */
 interface PairJudgement {
   match: boolean;
   confidence: number;
@@ -121,14 +121,32 @@ interface PairJudgement {
   evidence: Array<{ paperId: string; quote: string }>;
 }
 
-const BatchJudgeSchema = z.object({
+/** 多标签判定里,模型对一对论文给出的单条关系结论。 */
+export interface MultiLabelVerdict extends PairJudgement {
+  relationId: string;
+  match: true;
+}
+
+/** 模型原始返回的单条标签,字段都可能缺失,归一化后再变成 MultiLabelVerdict。 */
+export interface MultiLabelCandidate {
+  relationId: string;
+  confidence?: number | null;
+  rationale?: string | null;
+  evidence?: Array<{ paperId: string; quote: string }> | null;
+}
+
+const MultiLabelSchema = z.object({
+  relationId: z.string(),
+  confidence: z.number().nullable().optional(),
+  rationale: z.string().nullable().optional(),
+  evidence: z.array(z.object({ paperId: z.string(), quote: z.string() })).nullable().optional(),
+});
+
+const MultiBatchSchema = z.object({
   results: z.array(
     z.object({
-      index: z.number(),
-      match: z.boolean(),
-      confidence: z.number().min(0).max(1).optional(),
-      rationale: z.string().optional(),
-      evidence: z.array(z.object({ paperId: z.string(), quote: z.string() })).optional(),
+      index: z.coerce.number(),
+      labels: z.array(MultiLabelSchema).nullable().optional(),
     }),
   ),
 });
@@ -147,8 +165,22 @@ export interface PairFeatures {
   textSim: number;
 }
 
-const topicIdsOf = (w: OaWork): Set<string> =>
-  new Set(w.fields.filter((f) => f.level === "topic").map((f) => f.id));
+/**
+ * 关系候选的领域标签。
+ *
+ * OpenAlex 会同时给出 field / subfield / topic 三级;Semantic Scholar 的
+ * 回退源却只有 field 级。早先这里只取 topic,导致 arXiv/S2 来源的论文
+ * 全部没有共享主题 —— “同任务异方法”“同期”“结论矛盾”的候选直接归零,
+ * 图上只剩少量基线/扩展边。按由细到粗回退,既保留 OpenAlex 的精度,
+ * 也让回退源至少能进入语义判定。
+ */
+function topicIdsOf(w: OaWork): Set<string> {
+  for (const level of ["topic", "subfield", "field"] as const) {
+    const ids = new Set(w.fields.filter((f) => f.level === level).map((f) => f.id));
+    if (ids.size) return ids;
+  }
+  return new Set();
+}
 
 /** 词集合的 Jaccard 相似度。 */
 function jaccard(a: Set<string>, b: Set<string>): number {
@@ -274,7 +306,7 @@ export function generatePairs(papers: OaWork[], textIndex?: TextIndex): PairFeat
 export function passesHardConstraints(f: PairFeatures, preset: RelationPreset): boolean {
   const c = preset.hardConstraints;
 
-  if (c.maxYearGap !== undefined && f.yearGap > c.maxYearGap) return false;
+  if (typeof c.maxYearGap === "number" && f.yearGap > c.maxYearGap) return false;
 
   if (c.requireCitation && !f.citesIJ && !f.citesJI) return false;
 
@@ -284,7 +316,7 @@ export function passesHardConstraints(f: PairFeatures, preset: RelationPreset): 
 
   // minSimilarity 走文本相似度而不是主题 id 重叠:后者的分辨率太粗,
   // 同一个子领域下的论文会全部落在同一档,起不到筛选作用
-  if (c.minSimilarity !== undefined && f.textSim < c.minSimilarity) return false;
+  if (typeof c.minSimilarity === "number" && f.textSim < c.minSimilarity) return false;
 
   return true;
 }
@@ -332,23 +364,11 @@ export function heuristicScore(f: PairFeatures, preset: RelationPreset): number 
       // 但**排序**仍然可以借文本相似度:结论矛盾的两篇,必然在讨论同一件事。
       return 0.2 + 0.8 * text;
     default:
-      return 0;
+      // 用户自定义/未来新增的关系没有专属打分公式时,退回文本相似度。
+      // 返回 0 会让这类关系连送审资格都没有 —— 扩展性不能只写在 schema 里。
+      return 0.2 + 0.8 * text;
   }
 }
-
-const JudgeSchema = z.object({
-  match: z.boolean(),
-  confidence: z.number().min(0).max(1).optional(),
-  rationale: z.string().optional(),
-  evidence: z
-    .array(
-      z.object({
-        paperId: z.string(),
-        quote: z.string(),
-      }),
-    )
-    .optional(),
-});
 
 const COMMON_RULES = `通用规则:
 1. 提供的「反例」是判断边界,遇到反例描述的情况必须判为不成立。
@@ -403,24 +423,27 @@ ${COMMON_RULES}`;
  * 而不是硬塞一段原文。界面上会把它标成「结构化依据」,
  * 与「原文片段」区分开 —— 两者的可信度不同,呈现方式也不该相同。
  */
-function structuralEvidence(f: PairFeatures, a: OaWork, b: OaWork): Evidence {
-  const citer = f.citesIJ ? a : f.citesJI ? b : null;
-  const cited = f.citesIJ ? b : f.citesJI ? a : null;
-
-  if (citer && cited) {
+function structuralEvidence(
+  f: PairFeatures,
+  a: OaWork,
+  b: OaWork,
+  citation: MultiPreparedPair["citation"],
+): Evidence {
+  if (citation !== "none") {
     return {
       kind: "citation",
-      paperId: `paper:${citer.id}`,
-      cites: `paper:${cited.id}`,
-      note: `引用记录来自 OpenAlex;两篇发表年份相差 ${f.yearGap} 年`,
+      paperId: `paper:${b.id}`,
+      cites: `paper:${a.id}`,
+      note:
+        citation === "mutual"
+          ? `引用记录来自 OpenAlex;两篇互相引用,年份相差 ${f.yearGap} 年`
+          : `引用记录来自 OpenAlex;B 引用 A,年份相差 ${f.yearGap} 年`,
     };
   }
 
   return {
     kind: "metadata",
-    note: `依据引文结构与发表元数据判定:${
-      f.citesIJ || f.citesJI ? "存在引用关系" : "两者互不引用"
-    },年份差 ${f.yearGap} 年,共享主题 ${f.sharedTopics.length} 个`,
+    note: `依据引文结构与发表元数据判定:两者互不引用,年份差 ${f.yearGap} 年,共享主题 ${f.sharedTopics.length} 个`,
     fields: {
       yearGap: f.yearGap,
       sharedTopics: f.sharedTopics.length,
@@ -470,11 +493,13 @@ function verifyQuotes(
 }
 
 export function pairPrompt(f: PairFeatures, a: OaWork, b: OaWork, preset: RelationPreset): string {
-  const relation = f.citesIJ
-    ? `${a.id} 引用了 ${b.id}`
-    : f.citesJI
-      ? `${b.id} 引用了 ${a.id}`
-      : "两者之间没有引用关系";
+  // 调用方负责先 orientPair:有引用时 a 是被引用方、b 是引用方
+  const relation =
+    f.citesIJ && f.citesJI
+      ? `${a.id} 与 ${b.id} 互相引用`
+      : f.citesIJ || f.citesJI
+        ? `${b.id} 引用了 ${a.id}`
+        : "两者之间没有引用关系";
 
   const fmt = (w: OaWork) =>
     [
@@ -512,7 +537,167 @@ ${fmt(b)}
   }。`;
 }
 
+/** 一对论文同时送审时,已经归一化方向、并带上了它有资格参与的关系。 */
+interface MultiPreparedPair {
+  f: PairFeatures;
+  a: OaWork;
+  b: OaWork;
+  eligible: RelationPreset[];
+  /** 候选对里所有可判关系的最高启发式分,用于决定谁先送审。 */
+  score: number;
+  /** 每个可判关系各自的启发式分。没有模型时仍按各自的门槛判定。 */
+  scoreByPreset: Map<string, number>;
+  /** 无序论文对键,用于去重、跳过与缓存。 */
+  pairKey: string;
+  /** 归一化方向后的引用事实:非互引时恒为 B 引用 A。 */
+  citation: "none" | "b-cites-a" | "mutual";
+}
+
+/**
+ * 方向归一化:有引用时,把被引用的一方放成 A、引用的一方放成 B。
+ *
+ * 这样同一对论文只需要送审一次,「基线」「扩展」也不会拿到反方向的文本。
+ * 无引用时保持原顺序;有向关系本来就被 requireCitation 挡在候选之外。
+ */
+export function orientPair(
+  f: PairFeatures,
+  a: OaWork,
+  b: OaWork,
+): { a: OaWork; b: OaWork } {
+  if (f.citesIJ) return { a: b, b: a };
+  return { a, b };
+}
+
+function pairKeyOf(f: PairFeatures, papers: OaWork[]): string {
+  const a = papers[f.i]?.id ?? "";
+  const b = papers[f.j]?.id ?? "";
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/**
+ * 多标签判定的系统提示词。
+ *
+ * 与单标签版本的区别不是「一次问六次」,而是**先分类再收敛**:
+ * 模型对一对论文返回所有成立的关系,硬约束决定每对能选哪些关系,
+ * 未知 id 或越界的结论会在 normalizeMultiLabels 里被丢掉。
+ */
+export function multiLabelSystem(): string {
+  return `你是一名严谨的学术文献分析助手。你会收到若干对论文,以及一份关系类型清单。
+你的任务不是给每对论文挑一个最像的关系,而是找出**所有成立的关系**;一对论文可以同时成立多条,也可以一条都不成立。
+
+通用规则:
+1. 只判断清单里的关系,relationId 必须与清单中的 id 完全一致。
+2. 每对论文会给出「可判关系」——那是通过硬约束的候选集合。只能从可判关系里返回,不要越界。
+3.「判定标准」定正例,「反例」定边界;出现反例描述的情况必须不判。
+4.「典型句式」只是识别线索,不是必要条件。论文没有使用那句话,但实质符合判定标准时仍应判成立;反过来,只是出现相似措辞也不够。
+5. 先看核心条件是否成立。核心条件成立、且没有触发反例时,应如实标注;不要因为表述含蓄、方法描述简略,或你个人觉得「也许还能更精确」就一律否定。
+6. 引用事实已经由系统核验。不要因为摘要里没有再次写「我们引用了谁」而否定引用;但仍要判断这次引用是否构成该关系的实质使用。
+7. 真正模棱两可、无法从标题与摘要确认核心条件时才不判。不要把「有一点像」当成成立,也不要为了保守而漏掉明确关系。
+8. 同一对论文可以有多个标签,但每条都要独立满足自己的标准;不要为了凑多标签而重复判定。
+9. 方向已经统一:若存在引用,A 是被引用的一方,B 是引用的一方(通常 A 更早);有向关系按这个方向判断。
+10. 证据标准写在关系清单里:
+   - structural:允许用引用记录、年份、主题等结构事实,evidence 可以为空;
+   - textual:必须给出摘要中逐字出现的 quote,不能改写、不能概括;给不出就不要判这条。
+11. quote 必须能在给定标题或摘要中逐字找到;不要编造。
+12. confidence 取 0–1,如实反映把握程度。核心条件明确成立但证据来自摘要概述时可取 0.6–0.75,有明确对比/改进语句时可取 0.8 以上。
+
+只输出 JSON:
+{"results":[{"index":1,"labels":[{"relationId":"baseline","confidence":0.8,"rationale":"一到两句话","evidence":[{"paperId":"W...","quote":"..."}]}]}]}
+没有成立的关系时 labels 为空数组。每一对都必须出现在 results 里。`;
+}
+
+/** 关系清单:把 rubric、方向与证据标准放在同一处,避免模型记错某一类。 */
+export function multiLabelTaxonomy(presets: RelationPreset[]): string {
+  return presets
+    .map((preset, index) => {
+      const direction = preset.directed
+        ? "有向(A 是被引用/较早的一方,B 是引用/较晚的一方)"
+        : "无向";
+      const evidence =
+        preset.evidencePolicy === "textual"
+          ? "textual —— 必须给出摘要中逐字出现的 quote;给不出就不要判这条"
+          : "structural —— 可用引用记录、年份、主题等结构事实,evidence 可为空";
+      return `### ${index + 1}. ${preset.id} · ${preset.label} / ${preset.labelEn}
+方向:${direction}
+证据:${evidence}
+判定标准:
+${preset.definition}
+反例(出现以下情况必须不判):
+${preset.negativeExamples}`;
+    })
+    .join("\n\n");
+}
+
+function multiLabelUserPrompt(items: MultiPreparedPair[], taxonomy: RelationPreset[]): string {
+  const blocks = items.map((item, index) => {
+    const citation =
+      item.citation === "none"
+        ? "两者之间没有引用关系"
+        : item.citation === "mutual"
+          ? "两篇互相引用;方向仍按 B 引用 A 描述"
+          : "存在引用;方向:B 引用了 A";
+    const eligible = item.eligible.map((preset) => preset.id).join(", ");
+    return `[${index + 1}]
+可判关系:${eligible}
+客观事实:${citation};年份差 ${item.f.yearGap} 年;共享主题 ${
+      item.f.sharedTopics.length ? item.f.sharedTopics.join(", ") : "(无)"
+    }
+A) ${item.a.id} · ${item.a.year} · ${item.a.title}
+   摘要: ${(item.a.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS)}
+B) ${item.b.id} · ${item.b.year} · ${item.b.title}
+   摘要: ${(item.b.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS)}`;
+  });
+
+  return `## 关系清单
+${multiLabelTaxonomy(taxonomy)}
+
+## 待判定 ${items.length} 对
+${blocks.join("\n\n")}
+
+逐对返回所有成立的关系;没有成立的关系时 labels 为空数组。每对都必须出现在 results 里。`;
+}
+
+/**
+ * 模型输出归一化。三个不可省的检查:
+ *   - relationId 必须在这一对的可判集合里(防止模型跨对套用 rubric);
+ *   - 同一关系只保留 confidence 最高的一条;
+ *   - evidence 形状不对的直接丢掉,后面还会再和原文做子串核验。
+ */
+export function normalizeMultiLabels(
+  raw: MultiLabelCandidate[],
+  eligible: RelationPreset[],
+): MultiLabelVerdict[] {
+  const allowed = new Map(eligible.map((preset, index) => [preset.id, index] as const));
+  const best = new Map<string, MultiLabelVerdict>();
+
+  for (const label of raw) {
+    const order = allowed.get(label.relationId);
+    if (order === undefined) continue;
+    const confidence = Number.isFinite(label.confidence)
+      ? Math.max(0, Math.min(1, label.confidence ?? 0.7))
+      : 0.7;
+    const previous = best.get(label.relationId);
+    if (previous && previous.confidence >= confidence) continue;
+    best.set(label.relationId, {
+      relationId: label.relationId,
+      match: true,
+      confidence,
+      rationale: label.rationale?.trim() || "模型判定该关系成立",
+      evidence: (label.evidence ?? []).filter(
+        (item) => item && typeof item.paperId === "string" && typeof item.quote === "string",
+      ),
+    });
+  }
+
+  return [...best.values()].sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+    return (allowed.get(a.relationId) ?? 0) - (allowed.get(b.relationId) ?? 0);
+  });
+}
+
 export interface RelationPipelineOptions {
+  /** 当前账号:关系判定用这个账号绑定的模型。 */
+  ownerId: string;
   presets: RelationPreset[];
   /** 每个预设最多送审多少对候选 */
   candidateLimit?: number;
@@ -524,6 +709,15 @@ export interface RelationPipelineOptions {
    * (排序用的就是启发式分),所以砍掉尾巴的损失远小于成本收益。
    */
   maxJudgedPerPreset?: number;
+  /**
+   * 一次建图最多送审多少**论文对**。
+   *
+   * 多标签判定的成本单位是论文对,不是「关系 × 论文对」:同一对论文
+   * 无论能判几条关系都只调用一次。这里因此单独设一个全局上限,
+   * 默认按每个关系的旧上限折算成两倍 —— 一次请求带回多条关系,
+   * 同样的预算能覆盖更大的候选面。
+   */
+  maxPairs?: number;
   /** 每篇种子论文最多保留多少条该关系的边 */
   perSeedLimit?: number;
   /** 种子论文:它们之间的边在配额上单独计数 */
@@ -554,9 +748,11 @@ export async function buildSemanticEdges(
   opts: RelationPipelineOptions,
 ): Promise<{ edges: GraphEdge[]; report: RelationReport }> {
   const {
+    ownerId,
     presets,
     candidateLimit = 40,
     maxJudgedPerPreset = 12,
+    maxPairs,
     seedOaIds = [],
     centerOaIds = seedOaIds,
     skipPairs,
@@ -572,7 +768,8 @@ export async function buildSemanticEdges(
     papers.map((w) => ({ id: w.id, text: documentOf(w.title, w.abstract) })),
   );
   const pairs = generatePairs(papers, textIndex);
-  const useLlm = await llmAvailable("relation");
+  const useLlm = await llmAvailable(ownerId, "relation");
+  const mode: "llm" | "heuristic" = useLlm ? "llm" : "heuristic";
 
   const edges: GraphEdge[] = [];
   const report: RelationReport = {
@@ -585,9 +782,24 @@ export async function buildSemanticEdges(
     judgedPairs: [],
   };
   const perSeedCount = new Map<string, number>();
+  const seedSet = new Set(seedOaIds);
+  const enabled = presets.filter((preset) => preset.enabled);
+  const pairBudget = Math.max(1, maxPairs ?? Math.max(16, maxJudgedPerPreset * 2));
 
-  for (const preset of presets) {
-    if (!preset.enabled) continue;
+  for (const preset of enabled) {
+    report.perPreset[preset.id] = { candidates: 0, judged: 0, matched: 0, mode };
+  }
+
+  /**
+   * 候选合并:同一对论文只保留一条记录,把能判的关系挂在它下面。
+   *
+   * 这是多标签判定的入口。旧实现按关系分头跑,一对论文被「基线」「扩展」
+   * 「思路类似」各审一次 —— 同样的两段摘要读三遍,提示词里的 rubric 也重复三遍。
+   * 合并后,一次调用即可返回所有成立的关系,冲突与重叠交给模型在同一上下文里处理。
+   */
+  const merged = new Map<string, MultiPreparedPair>();
+
+  for (const preset of enabled) {
 
     /**
      * 有模型就全部交给模型。
@@ -596,9 +808,6 @@ export async function buildSemanticEdges(
      * 但那正好把因果搞反了:矛盾关系恰恰是**唯一必须读摘要才能判断**的关系,
      * 元数据里根本没有它的信号。排除它的结果就是这一类边永远为空。
      */
-    const mode: "llm" | "heuristic" = useLlm ? "llm" : "heuristic";
-    report.perPreset[preset.id] = { candidates: 0, judged: 0, matched: 0, mode };
-
     const eligible = pairs.filter((f) => passesHardConstraints(f, preset));
     report.perPreset[preset.id]!.candidates = eligible.length;
 
@@ -620,38 +829,20 @@ export async function buildSemanticEdges(
     const ranked = centerRelated
       .filter((f) => {
         if (!skipPairs?.size) return true;
-        const a = papers[f.i];
-        const b = papers[f.j];
-        return !a || !b || !skipPairs.has(`${a.id}|${b.id}`);
+        return !skipPairs.has(pairKeyOf(f, papers));
       })
       .map((f) => ({ f, s: heuristicScore(f, preset) }))
       .sort((x, y) => y.s - x.s)
       .slice(0, candidateLimit);
 
-    let judgedCount = 0;
-    let matchedTotal = 0;
-    let cursor = 0;
-    const batchEdges: GraphEdge[] = [];
-    const chunkSize = JUDGE_BATCH * JUDGE_CONCURRENCY;
+    for (const { f, s } of ranked) {
+      const a = papers[f.i];
+      const b = papers[f.j];
+      if (!a || !b) continue;
 
-    while (cursor < ranked.length) {
-      // 已经攒够这类关系要显示的条数,再问模型就是浪费
-      if (matchedTotal >= preset.maxPerSeed) break;
-      // 硬上限:防止一个高产预设把额度吃光
-      if (mode === "llm" && judgedCount >= maxJudgedPerPreset) break;
-
-      const remain = mode === "llm" ? maxJudgedPerPreset - judgedCount : chunkSize;
-      const slice = ranked.slice(cursor, cursor + Math.min(chunkSize, remain));
-      cursor += slice.length;
-      if (!slice.length) break;
-
-      // ---- 归一化方向 + 配额过滤 ----
-      const prepared: PreparedPair[] = [];
-      for (const { f, s } of slice) {
-        let a = papers[f.i];
-        let b = papers[f.j];
-        if (!a || !b) continue;
-
+      const pairKey = pairKeyOf(f, papers);
+      let item = merged.get(pairKey);
+      if (!item) {
         /**
          * 有向关系的**方向必须按引用来定,不能按下标定**。
          *
@@ -659,115 +850,214 @@ export async function buildSemanticEdges(
          * 「基线」的定义是「A 是 B 的基线」,如果 A/B 顺序随机,
          * 一半的候选就是反的 —— 一个严谨的模型会如实判为不成立。
          * 实测表现就是候选有几百条、judged 也有十几条,但 matched 恒为 0。
-         *
-         * 规则:i 引用了 j,说明 j 更早、是被当作基础的那一方,
-         * 于是把 j 放成 A、i 放成 B。
          */
-        if (preset.directed && f.citesIJ) {
-          const t = a;
-          a = b;
-          b = t;
-        }
-
-        // 每篇种子论文的配额:防止一个高产预设淹没整张图
-        const quotaKey = `${preset.id}:${seedOaIds.includes(b.id) ? b.id : a.id}`;
-        if ((perSeedCount.get(quotaKey) ?? 0) >= preset.maxPerSeed) continue;
-
-        prepared.push({ f, s, a, b, quotaKey });
-        report.judgedPairs.push(a.id < b.id ? `${a.id}|${b.id}` : `${b.id}|${a.id}`);
+        const oriented = orientPair(f, a, b);
+        item = {
+          f,
+          a: oriented.a,
+          b: oriented.b,
+          eligible: [],
+          score: s,
+          scoreByPreset: new Map(),
+          pairKey,
+          citation:
+            f.citesIJ && f.citesJI ? "mutual" : f.citesIJ || f.citesJI ? "b-cites-a" : "none",
+        };
+        merged.set(pairKey, item);
       }
-      if (!prepared.length) continue;
 
-      // ---- 无模型:本地启发式,一次算完 ----
-      if (mode === "heuristic") {
-        for (const p of prepared) {
-          if (matchedTotal >= preset.maxPerSeed) break;
-          const edge = heuristicEdge(preset, p, report);
+      // 同一指数级候选可能在多个关系的候选集里出现;关系只挂一次
+      if (!item.eligible.some((p) => p.id === preset.id)) item.eligible.push(preset);
+      item.scoreByPreset.set(preset.id, s);
+      if (s > item.score) item.score = s;
+    }
+  }
+
+  const prepared = [...merged.values()]
+    .sort((a, b) => b.score - a.score || b.eligible.length - a.eligible.length)
+    .slice(0, pairBudget);
+
+  for (const item of prepared) {
+    report.judgedPairs.push(item.pairKey);
+    if (mode !== "llm") continue;
+    // 每对论文只调用一次,但每个参与判定的关系都记为「看过这一对」
+    for (const preset of item.eligible) report.perPreset[preset.id]!.judged++;
+  }
+
+  const chunkSize = MULTI_BATCH * JUDGE_CONCURRENCY;
+  let cursor = 0;
+
+  while (cursor < prepared.length) {
+    const chunk = prepared.slice(cursor, cursor + chunkSize);
+    cursor += chunk.length;
+    if (!chunk.length) break;
+
+    const batchEdges: GraphEdge[] = [];
+
+    // ---- 无模型:本地启发式,一次算完 ----
+    if (mode === "heuristic") {
+      for (const item of chunk) {
+        for (const preset of item.eligible) {
+          const score = item.scoreByPreset.get(preset.id) ?? 0;
+          const quotaKey = quotaKeyOf(preset, item, seedSet);
+          if (report.perPreset[preset.id]!.matched >= preset.maxPerSeed) continue;
+          if ((perSeedCount.get(quotaKey) ?? 0) >= preset.maxPerSeed) continue;
+
+          const edge = heuristicEdge(preset, item, score, report);
           if (!edge) continue;
+
           edges.push(edge);
-          perSeedCount.set(p.quotaKey, (perSeedCount.get(p.quotaKey) ?? 0) + 1);
+          perSeedCount.set(quotaKey, (perSeedCount.get(quotaKey) ?? 0) + 1);
           report.perPreset[preset.id]!.matched++;
-          matchedTotal++;
         }
+      }
+      continue;
+    }
+
+    // ---- 有模型:逐关系查缓存,只把缺失的关系送审 ----
+    const cachedByIndex = new Map<number, MultiLabelVerdict[]>();
+    const freshByIndex = new Map<number, MultiLabelVerdict[]>();
+    const missingByIndex = new Map<number, RelationPreset[]>();
+    const pending: number[] = [];
+
+    for (let i = 0; i < chunk.length; i++) {
+      const item = chunk[i];
+      if (!item) continue;
+
+      const cachedLabels: MultiLabelVerdict[] = [];
+      const missing: RelationPreset[] = [];
+      for (const preset of item.eligible) {
+        const { hit, verdict } = await readLabel(item.pairKey, preset);
+        if (!hit) {
+          missing.push(preset);
+          continue;
+        }
+        if (verdict) cachedLabels.push(verdict);
+      }
+
+      if (cachedLabels.length) cachedByIndex.set(i, cachedLabels);
+      if (!missing.length) {
+        // 整对都命中缓存,这一对不会再产生模型调用
+        report.cacheHits++;
         continue;
       }
+      missingByIndex.set(i, missing);
+      pending.push(i);
+    }
 
-      // ---- 有模型:先查缓存,只对没判过的送审 ----
-      judgedCount += prepared.length;
-      report.perPreset[preset.id]!.judged += prepared.length;
-      const verdicts = new Map<number, PairJudgement>();
-      const pending: number[] = [];
+    // ---- 分批送审,批间并发 ----
+    const batches = chunkIndexes(pending, MULTI_BATCH);
+    await runConcurrent(batches, JUDGE_CONCURRENCY, async (batch) => {
+      const items: MultiPreparedPair[] = [];
+      const indexes: number[] = [];
+      for (const i of batch) {
+        const item = chunk[i];
+        const missing = missingByIndex.get(i);
+        if (!item || !missing?.length) continue;
+        // 只送这一对里尚未命中的关系:改一条 rubric 不会连带重判其它标签
+        items.push({ ...item, eligible: missing });
+        indexes.push(i);
+      }
+      if (!items.length) return;
 
-      for (let i = 0; i < prepared.length; i++) {
-        const p = prepared[i];
-        if (!p) continue;
-        const hit = await readJudgement(preset, p.a.id, p.b.id);
-        if (hit) {
-          verdicts.set(i, hit);
-          report.cacheHits++;
-        } else {
-          pending.push(i);
+      const got = await judgeMultiBatch(ownerId, items, taxonomyOf(items), report);
+      if (!got) {
+        // 整批解析失败:退回逐对判定,多花几次调用也不丢结论
+        report.batchFallbacks++;
+        for (let k = 0; k < items.length; k++) {
+          const item = items[k];
+          const index = indexes[k];
+          if (!item || index === undefined) continue;
+          const single = await judgeMultiPair(ownerId, item, report);
+          if (single !== null) freshByIndex.set(index, single);
+        }
+        return;
+      }
+
+      let missing = false;
+      for (let k = 0; k < items.length; k++) {
+        const item = items[k];
+        const index = indexes[k];
+        if (!item || index === undefined) continue;
+        const labels = got.get(k);
+        if (labels) {
+          freshByIndex.set(index, labels);
+          continue;
+        }
+        // 批里漏掉一对:其余结论保留,这一对单独补判
+        missing = true;
+        const single = await judgeMultiPair(ownerId, item, report);
+        if (single !== null) freshByIndex.set(index, single);
+      }
+      if (missing) report.batchFallbacks++;
+    });
+
+    // ---- 回写缓存并落边 ----
+    for (let i = 0; i < chunk.length; i++) {
+      const item = chunk[i];
+      if (!item) continue;
+
+      const missing = missingByIndex.get(i);
+      const fresh = freshByIndex.get(i);
+      if (missing && fresh) {
+        // 否定结论也逐关系落盘:这一对下次只剩未成立的关系时,依然零调用
+        for (const preset of missing) {
+          const verdict = fresh.find((label) => label.relationId === preset.id) ?? null;
+          await writeLabel(item.pairKey, preset, verdict);
         }
       }
 
-      // ---- 分批送审,批间并发 ----
-      const batches = chunkIndexes(pending, JUDGE_BATCH);
-      await runConcurrent(batches, JUDGE_CONCURRENCY, async (batch) => {
-        const items = batch.map((i) => prepared[i]).filter((p): p is PreparedPair => Boolean(p));
-        const got = await judgeBatch(preset, items, report);
-        if (got) {
-          batch.forEach((i, k) => {
-            const v = got.get(k);
-            if (v) verdicts.set(i, v);
-          });
-          return;
-        }
-        // 整批解析失败:退回逐条判定,宁可慢一点也不丢结论
-        report.batchFallbacks++;
-        for (const i of batch) {
-          const p = prepared[i];
-          if (!p) continue;
-          const single = await judgePair(preset, p, report);
-          if (single) verdicts.set(i, single);
-        }
-      });
+      const labels = normalizeMultiLabels(
+        [...(cachedByIndex.get(i) ?? []), ...(fresh ?? [])],
+        item.eligible,
+      );
+      if (!labels.length) continue;
 
-      // ---- 落边并回写缓存 ----
-      for (let i = 0; i < prepared.length; i++) {
-        const p = prepared[i];
-        const v = verdicts.get(i);
-        if (!p || !v) continue;
+      for (const verdict of labels) {
+        const preset = item.eligible.find((p) => p.id === verdict.relationId);
+        if (!preset) continue;
 
-        await writeJudgement(preset, p.a.id, p.b.id, v);
-        if (matchedTotal >= preset.maxPerSeed) continue;
-        const edge = judgementToEdge(preset, p, v, report);
+        // 每篇种子与每个预设的配额:防止高产关系淹没整张图
+        const quotaKey = quotaKeyOf(preset, item, seedSet);
+        if (report.perPreset[preset.id]!.matched >= preset.maxPerSeed) continue;
+        if ((perSeedCount.get(quotaKey) ?? 0) >= preset.maxPerSeed) continue;
+
+        const edge = judgementToEdge(preset, item, verdict, report);
         if (!edge) continue;
 
         edges.push(edge);
         batchEdges.push(edge);
-        perSeedCount.set(p.quotaKey, (perSeedCount.get(p.quotaKey) ?? 0) + 1);
+        perSeedCount.set(quotaKey, (perSeedCount.get(quotaKey) ?? 0) + 1);
         report.perPreset[preset.id]!.matched++;
-        matchedTotal++;
-      }
-
-      // 一批判完就把它推出去 —— 流式返回靠这个"边判边亮"
-      if (batchEdges.length) {
-        onEdges?.(batchEdges);
-        batchEdges.length = 0;
       }
     }
+
+    // 一批判完就把它推出去 —— 流式返回靠这个"边判边亮"
+    if (batchEdges.length) onEdges?.(batchEdges);
   }
 
   return { edges, report };
 }
 
-/** 排序后待判定的一对:已归一化方向、已算好配额键。 */
-interface PreparedPair {
-  f: PairFeatures;
-  s: number;
-  a: OaWork;
-  b: OaWork;
-  quotaKey: string;
+/** 一批待判对里出现的关系清单,只渲染这一批真正用得上的 rubric。 */
+function taxonomyOf(items: MultiPreparedPair[]): RelationPreset[] {
+  const seen = new Map<string, RelationPreset>();
+  for (const item of items) {
+    for (const preset of item.eligible) {
+      if (!seen.has(preset.id)) seen.set(preset.id, preset);
+    }
+  }
+  return [...seen.values()];
+}
+
+/** 配额键按「关系 + 种子」计。没有种子参与时退回 A 的 id,保证同一对论文稳定。 */
+function quotaKeyOf(
+  preset: RelationPreset,
+  item: MultiPreparedPair,
+  seedSet: ReadonlySet<string>,
+): string {
+  const subject = seedSet.has(item.b.id) ? item.b.id : item.a.id;
+  return `${preset.id}:${subject}`;
 }
 
 function chunkIndexes(list: number[], size: number): number[][] {
@@ -793,121 +1083,118 @@ async function runConcurrent<T>(
   await Promise.all(workers);
 }
 
-function judgementKey(preset: RelationPreset, aId: string, bId: string): string {
-  // 提示词版本进键:判定标准一改,旧结论必须自动失效
-  return `${preset.id}|${preset.promptVersion}|${aId}|${bId}`;
+interface CachedRelationLabel {
+  relationId: string;
+  /** false 是「判过,但不成立」。否定结论同样要缓存,否则每轮都会重问。 */
+  match: boolean;
+  confidence?: number | null;
+  rationale?: string | null;
+  evidence?: Array<{ paperId: string; quote: string }> | null;
 }
-
-function readJudgement(
-  preset: RelationPreset,
-  aId: string,
-  bId: string,
-): Promise<PairJudgement | null> {
-  return readCache<PairJudgement>("relations", judgementKey(preset, aId, bId));
-}
-
-function writeJudgement(
-  preset: RelationPreset,
-  aId: string,
-  bId: string,
-  value: PairJudgement,
-): Promise<boolean> {
-  return writeCache("relations", judgementKey(preset, aId, bId), value);
-}
-
-/** 批量判定的提示词。一次问多对,把 rubric 的成本摊薄。 */
-function batchPrompt(preset: RelationPreset, items: PreparedPair[]): string {
-  const blocks = items.map((p, i) => {
-    const relation = p.f.citesIJ
-      ? `${p.a.id} 引用了 ${p.b.id}`
-      : p.f.citesJI
-        ? `${p.b.id} 引用了 ${p.a.id}`
-        : "两者之间没有引用关系";
-    return `[${i + 1}]
-客观事实:${relation};年份差 ${p.f.yearGap} 年;共享主题 ${
-      p.f.sharedTopics.length ? p.f.sharedTopics.join(", ") : "(无)"
-    }
-A) ${p.a.id} · ${p.a.year} · ${p.a.title}
-   摘要: ${(p.a.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS)}
-B) ${p.b.id} · ${p.b.year} · ${p.b.title}
-   摘要: ${(p.b.abstract ?? "(无摘要)").slice(0, ABSTRACT_CHARS)}`;
-  });
-
-  return `## 关系类型:${preset.label}(${preset.labelEn})
-${preset.directed ? "(有向:A 是关系的主体)" : "(无向)"}
-
-判定标准:
-${preset.definition}
-
-反例(出现以下情况必须判为不成立):
-${preset.negativeExamples}
-
-## 待判定 ${items.length} 对
-${blocks.join("\n\n")}
-
-逐对给出结论,每对都必须出现在 results 里。`;
-}
-
-const BATCH_SYSTEM_SUFFIX = `
-
-你会一次收到多对论文。请对**每一对**独立判定,不要互相影响。
-只输出 JSON:
-{"results":[{"index":1,"match":true|false,"confidence":0-1,"rationale":"...","evidence":[{"paperId":"...","quote":"..."}]}]}`;
 
 /**
- * 送一批,拿回逐条结论。
+ * 缓存键 = 无序论文对 + 关系 id + 该关系的 promptVersion。
  *
- * 返回 null 表示**整批不可用**(网络失败或输出不合规),由调用方退回逐条判定。
- * 单条缺失不算整批失败 —— 其余仍然有效,这条会在下一轮补判或被跳过。
+ * 粒度必须落到关系,不能落到论文对:一对论文可能同时命中「基线」与「扩展」,
+ * 用户只改了其中一条的 rubric,另一条的旧结论仍然有效 —— 整对作废会白白重付一次调用。
  */
-async function judgeBatch(
+function labelCacheKey(pairKey: string, preset: RelationPreset): string {
+  // 系统提示词也是判定口径的一部分。它变化时必须让旧结论失效,
+  // 否则之前缓存下来的 match:false 会永久压住新口径。
+  return `${pairKey}|${preset.id}|${preset.promptVersion}|multi@2`;
+}
+
+async function readLabel(
+  pairKey: string,
   preset: RelationPreset,
-  items: PreparedPair[],
+): Promise<{ hit: boolean; verdict: MultiLabelVerdict | null }> {
+  const cached = await readCache<CachedRelationLabel>(
+    "relation-labels",
+    labelCacheKey(pairKey, preset),
+  );
+  if (!cached) return { hit: false, verdict: null };
+  // 形状不对的旧载荷按未命中处理,不能把损坏的缓存当成「不成立」
+  if (cached.relationId !== preset.id || typeof cached.match !== "boolean") {
+    return { hit: false, verdict: null };
+  }
+  if (cached.match !== true) return { hit: true, verdict: null };
+  // 缓存是外部输入:旧版本可能塞进未知 relationId,读出来仍要过白名单
+  const [verdict] = normalizeMultiLabels([cached], [preset]);
+  return verdict ? { hit: true, verdict } : { hit: false, verdict: null };
+}
+
+function writeLabel(
+  pairKey: string,
+  preset: RelationPreset,
+  verdict: MultiLabelVerdict | null,
+): Promise<boolean> {
+  const payload: CachedRelationLabel = verdict
+    ? {
+        relationId: verdict.relationId,
+        match: true,
+        confidence: verdict.confidence,
+        rationale: verdict.rationale,
+        evidence: verdict.evidence,
+      }
+    : { relationId: preset.id, match: false };
+  return writeCache("relation-labels", labelCacheKey(pairKey, preset), payload);
+}
+
+/**
+ * 多标签批量送审。
+ *
+ * 返回 null 表示整批不可用(网络失败或输出完全不合规),由调用方退回逐对判定。
+ * 返回空 Map 永远不会发生 —— 只要模型给出了任意一对的结果,其余缺失的由调用方补判。
+ */
+async function judgeMultiBatch(
+  ownerId: string,
+  items: MultiPreparedPair[],
+  taxonomy: RelationPreset[],
   report: RelationReport,
-): Promise<Map<number, PairJudgement> | null> {
+): Promise<Map<number, MultiLabelVerdict[]> | null> {
   if (!items.length) return new Map();
 
-  const system = judgeSystem(preset.evidencePolicy) + BATCH_SYSTEM_SUFFIX;
-  const user = batchPrompt(preset, items);
+  const system = multiLabelSystem();
+  const user = multiLabelUserPrompt(items, taxonomy);
   report.llmCalls++;
   report.estimatedTokens += Math.ceil((system.length + user.length) / 2.4);
 
-  const res = await chatJson({ system, user, temperature: 0.05, maxTokens: 2200 }, BatchJudgeSchema);
+  const res = await chatJson(
+    { ownerId, system, user, temperature: 0.05, maxTokens: 4600 },
+    MultiBatchSchema,
+  );
   if (!res) return null;
 
-  const out = new Map<number, PairJudgement>();
-  for (const r of res.value.results) {
-    const idx = r.index - 1;
-    if (idx < 0 || idx >= items.length) continue;
-    out.set(idx, {
-      match: r.match,
-      confidence: r.confidence ?? 0.7,
-      rationale: r.rationale ?? "",
-      evidence: r.evidence ?? [],
-    });
+  const out = new Map<number, MultiLabelVerdict[]>();
+  for (const result of res.value.results) {
+    const index = result.index - 1;
+    const item = items[index];
+    if (!item) continue;
+    out.set(index, normalizeMultiLabels(result.labels ?? [], item.eligible));
   }
   return out.size ? out : null;
 }
 
-/** 逐条判定。批处理失败时的兜底,也是质量优先时的降级路径。 */
-async function judgePair(
-  preset: RelationPreset,
-  p: PreparedPair,
+/** 单对兜底。仍走多标签 schema —— 兜底不该顺手降级成「一对只能出一条关系」。 */
+async function judgeMultiPair(
+  ownerId: string,
+  item: MultiPreparedPair,
   report: RelationReport,
-): Promise<PairJudgement | null> {
-  const system = judgeSystem(preset.evidencePolicy);
-  const user = pairPrompt(p.f, p.a, p.b, preset);
+): Promise<MultiLabelVerdict[] | null> {
+  const system = multiLabelSystem();
+  const user = multiLabelUserPrompt([item], item.eligible);
   report.llmCalls++;
   report.estimatedTokens += Math.ceil((system.length + user.length) / 2.4);
 
-  const res = await chatJson({ system, user, temperature: 0.05, maxTokens: 900 }, JudgeSchema);
+  // 系统提示词统一要求 results 结构,单对兜底也走同一个 schema,避免出口不一致
+  const res = await chatJson(
+    { ownerId, system, user, temperature: 0.05, maxTokens: 1800 },
+    MultiBatchSchema,
+  );
   if (!res) return null;
-  return {
-    match: res.value.match,
-    confidence: res.value.confidence ?? 0.7,
-    rationale: res.value.rationale ?? "",
-    evidence: res.value.evidence ?? [],
-  };
+  const result = res.value.results.find((entry) => entry.index === 1) ?? res.value.results[0];
+  if (!result) return null;
+  return normalizeMultiLabels(result.labels ?? [], item.eligible);
 }
 
 /**
@@ -921,7 +1208,7 @@ async function judgePair(
  */
 function judgementToEdge(
   preset: RelationPreset,
-  p: PreparedPair,
+  p: MultiPreparedPair,
   v: PairJudgement,
   report: RelationReport,
 ): GraphEdge | null {
@@ -937,7 +1224,7 @@ function judgementToEdge(
 
   if (!evidence.length) {
     if (preset.evidencePolicy === "textual") return null;
-    evidence = [structuralEvidence(p.f, p.a, p.b)];
+    evidence = [structuralEvidence(p.f, p.a, p.b, p.citation)];
   }
 
   return makeEdge(preset, p.a, p.b, v.confidence, evidence, v.rationale, {
@@ -951,22 +1238,25 @@ function judgementToEdge(
 /** 没有模型时的本地判定。保守、无原文证据,但如实标注来源。 */
 function heuristicEdge(
   preset: RelationPreset,
-  p: PreparedPair,
+  p: MultiPreparedPair,
+  score: number,
   report: RelationReport,
 ): GraphEdge | null {
   void report;
   if (preset.id === "contradicts") return null; // 没有模型就诚实地不给结论
-  if (p.s < 0.55) return null;
+  if (score < 0.55) return null;
 
   return makeEdge(
     preset,
     p.a,
     p.b,
-    p.s,
+    score,
     [
       {
         kind: "metadata",
-        note: `引用关系:${p.f.citesIJ ? "A→B" : p.f.citesJI ? "B→A" : "无"};共享主题 ${p.f.sharedTopics.length} 个;标题相似度 ${(p.f.titleSim * 100).toFixed(0)}%`,
+        note: `引用关系:${
+          p.citation === "none" ? "无" : p.citation === "mutual" ? "互相引用" : "B→A"
+        };共享主题 ${p.f.sharedTopics.length} 个;标题相似度 ${(p.f.titleSim * 100).toFixed(0)}%`,
         fields: {
           yearGap: p.f.yearGap,
           topicOverlap: Number(p.f.topicOverlap.toFixed(3)),

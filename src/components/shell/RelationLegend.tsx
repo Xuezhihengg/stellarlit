@@ -2,21 +2,13 @@
 
 import type { StarfieldPayload } from "@/types/api";
 
+import { edgeKindOf } from "@/lib/graph/edge-kinds";
+
 interface RelationLegendProps {
   payload: StarfieldPayload;
   dimmedKinds: Set<string>;
   onToggle: (kind: string) => void;
 }
-
-/** 边 kind → 关系预设 id,用于把统计数字挂回图例。 */
-const KIND_TO_PRESET: Record<string, string> = {
-  BASELINE_OF: "baseline",
-  CONTEMPORARY_OF: "contemporary",
-  SIMILAR_APPROACH: "similar",
-  ALTERNATIVE_TO: "alternative",
-  EXTENDS: "extends",
-  CONTRADICTS: "contradicts",
-};
 
 /**
  * 关系图例,同时兼任筛选器。
@@ -55,8 +47,8 @@ export function RelationLegend({ payload, dimmedKinds, onToggle }: RelationLegen
         tone: p.visual.tone,
         dash: p.visual.dash,
         directed: p.directed,
-        kind: Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "",
-        count: counts.get(Object.keys(KIND_TO_PRESET).find((k) => KIND_TO_PRESET[k] === p.id) ?? "") ?? 0,
+        kind: edgeKindOf(p.id),
+        count: counts.get(edgeKindOf(p.id)) ?? 0,
       }))].map((p) => {
         const kind = p.kind;
         const n = p.count;

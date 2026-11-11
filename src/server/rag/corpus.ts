@@ -12,6 +12,8 @@
  */
 
 import { chunkText, tokenizeForSearch } from "@/lib/rag/text";
+import { formatPaperText } from "@/lib/format";
+import { edgeLabelForKind } from "@/lib/graph/edge-kinds";
 import { edgeKindLabel } from "@/lib/graph/edge-labels";
 import type { StarfieldPayload } from "@/types/api";
 import type { GraphEdge, PaperNode } from "@/types/kg";
@@ -51,11 +53,41 @@ function evidenceText(edge: GraphEdge): string {
   const parts: string[] = [];
   if (edge.rationale) parts.push(edge.rationale);
   for (const ev of edge.evidence) {
-    if (ev.kind === "span" && ev.quote) parts.push(`原文:「${ev.quote}」`);
+    if (ev.kind === "span" && ev.quote) parts.push(`原文:「${formatPaperText(ev.quote)}」`);
     if (ev.kind === "citation") parts.push("依据:上游引用记录");
     if (ev.kind === "metadata" && ev.note) parts.push(`依据:${ev.note}`);
   }
   return parts.join(" ");
+}
+
+/** 把一条语义边压成检索块。语料与 Agent 工具结果共用,保证 chunkId 一致、能去重。 */
+export function relationSource(
+  edge: GraphEdge,
+  a: PaperNode,
+  b: PaperNode,
+  label = edgeKindLabel(edge.kind),
+): RagSource {
+  const aTitle = formatPaperText(a.title);
+  const bTitle = formatPaperText(b.title);
+  const body = [
+    `关系类型:${label}`,
+    `《${aTitle}》(${a.year || "年份未知"})与《${bTitle}》(${b.year || "年份未知"})`,
+    evidenceText(edge),
+    `判定置信度 ${(edge.confidence * 100).toFixed(0)}%`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return {
+    chunkId: `edge:${edge.id}`,
+    paperId: a.id,
+    paperIds: [a.id, b.id],
+    title: `${shortTitle(aTitle)} ↔ ${shortTitle(bTitle)}`,
+    section: "relation",
+    year: a.year || undefined,
+    text: body,
+    quote: body.slice(0, 220),
+  };
 }
 
 export function buildCorpus(payload: StarfieldPayload): RagCorpus {
@@ -64,8 +96,9 @@ export function buildCorpus(payload: StarfieldPayload): RagCorpus {
   const chunks: RagChunk[] = [];
 
   for (const paper of papers) {
+    const paperTitle = formatPaperText(paper.title);
     const header = [
-      `《${paper.title}》`,
+      `《${paperTitle}》`,
       [paper.year || "年份未知", paper.venue].filter(Boolean).join(" · "),
       paper.authors.length ? `作者:${paper.authors.map((a) => a.name).join("、")}` : "",
       `被引 ${paper.citations.toLocaleString()}`,
@@ -77,31 +110,32 @@ export function buildCorpus(payload: StarfieldPayload): RagCorpus {
       chunkId: `${paper.id}:meta`,
       paperId: paper.id,
       paperIds: [paper.id],
-      title: paper.title,
+      title: paperTitle,
       section: "title",
       year: paper.year || undefined,
       text: header,
       quote: header,
       // 标题是强信号:重复一遍,让词面检索更偏向"问到的这篇论文"
       tokens: [
-        ...tokenizeForSearch(paper.title),
-        ...tokenizeForSearch(paper.title),
+        ...tokenizeForSearch(paperTitle),
+        ...tokenizeForSearch(paperTitle),
         ...tokenizeForSearch(header),
       ],
     });
 
-    if (!paper.abstract) continue;
-    for (const part of chunkText(paper.abstract, { target: 360, overlap: 80, minTail: 100 })) {
+    const abstract = formatPaperText(paper.abstract ?? "");
+    if (!abstract) continue;
+    for (const part of chunkText(abstract, { target: 360, overlap: 80, minTail: 100 })) {
       chunks.push({
         chunkId: `${paper.id}:abstract:${part.index}`,
         paperId: paper.id,
         paperIds: [paper.id],
-        title: paper.title,
+        title: paperTitle,
         section: "abstract",
         year: paper.year || undefined,
         text: part.text,
         quote: part.text.slice(0, 220),
-        tokens: tokenizeForSearch(`${paper.title} ${part.text}`),
+        tokens: tokenizeForSearch(`${paperTitle} ${part.text}`),
       });
     }
   }
@@ -113,27 +147,12 @@ export function buildCorpus(payload: StarfieldPayload): RagCorpus {
     const b = byId.get(edge.target);
     if (!a || !b) continue;
 
-    const label = edgeKindLabel(edge.kind);
-    const body = [
-      `关系类型:${label}`,
-      `《${a.title}》(${a.year || "年份未知"})与《${b.title}》(${b.year || "年份未知"})`,
-      evidenceText(edge),
-      `判定置信度 ${(edge.confidence * 100).toFixed(0)}%`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
+    const label = edgeLabelForKind(edge.kind, payload.presets);
+    const source = relationSource(edge, a, b, label);
     chunks.push({
-      chunkId: `edge:${edge.id}`,
-      paperId: a.id,
-      paperIds: [a.id, b.id],
-      title: `${shortTitle(a.title)} ↔ ${shortTitle(b.title)}`,
-      section: "relation",
-      year: a.year || undefined,
-      text: body,
-      quote: body.slice(0, 220),
+      ...source,
       tokens: tokenizeForSearch(
-        `${label} ${edge.kind} ${a.title} ${b.title} ${body}`,
+        `${label} ${edge.kind} ${formatPaperText(a.title)} ${formatPaperText(b.title)} ${source.text}`,
       ),
     });
   }

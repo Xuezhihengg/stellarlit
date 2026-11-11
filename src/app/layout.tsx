@@ -1,6 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
+import { RouteTransition } from "@/components/shell/RouteTransition";
+
 export const metadata: Metadata = {
   title: "StellarLit · 论文星图",
   description:
@@ -25,7 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
-      <body>{children}</body>
+      <body>
+        {children}
+        <RouteTransition />
+      </body>
     </html>
   );
 }

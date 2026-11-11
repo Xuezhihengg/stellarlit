@@ -48,12 +48,12 @@ const DEFAULT_POOL = 40;
  * 每类关系默认送审多少对。
  *
  * 这个数字是**直接用钱和换图**的旋钮:它乘以预设数量、再除以批大小,
- * 就是一次冷启动的模型调用次数。12 对应的实测是
- * 「约 12~15 次调用 / 11 秒 / 三万六千 token / 图上十几篇论文」——
- * 对演示够用,而且排序改进之后命中率已经明显提高。
+ * 就是一次冷启动的模型调用次数。原来的 12 在多标签合并后略显保守,
+ * 经常只覆盖到少量引用对;16 能在不明显拉长等待的前提下,
+ * 让同期、同任务异方法这类非引用关系也有机会进入判定。
  * 调大能长出一张更密的语义图,代价接近线性。
  */
-const DEFAULT_JUDGE_DEPTH = 12;
+const DEFAULT_JUDGE_DEPTH = 16;
 
 /** 传递扩展默认层数。两层是"图能长大"与"成本可控"之间的折中。 */
 const DEFAULT_EXPAND_DEPTH = 2;
@@ -250,6 +250,8 @@ function starfieldId(seedIds: string[]): string {
 }
 
 export interface GrowOptions {
+  /** 数据归属:由会话解析后传入;脚本与测试可省略,落到 legacy */
+  ownerId?: string;
   starfieldId?: string;
   seedPaperId: string;
   name?: string;
@@ -331,13 +333,14 @@ const emptyReport = (): RelationReport => ({
 
 async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent> {
   const started = Date.now();
+  const ownerId = opts.ownerId ?? "legacy";
   const poolSize = Math.max(6, Math.min(200, opts.pool ?? DEFAULT_POOL));
   const depth = Math.max(1, Math.min(3, opts.depth ?? DEFAULT_EXPAND_DEPTH));
   const judgeDepth = Math.max(4, Math.min(40, opts.judgeDepth ?? DEFAULT_JUDGE_DEPTH));
   const seedOaId = opts.seedPaperId.replace(/^paper:/, "");
   const presets: RelationPreset[] = opts.presets?.length ? opts.presets : BUILTIN_PRESETS;
 
-  const existing = opts.starfieldId ? await loadStarfield(opts.starfieldId) : null;
+  const existing = opts.starfieldId ? await loadStarfield(opts.starfieldId, ownerId) : null;
 
   // 既有星空里的所有种子都要在场 —— 累积构建的前提
   const allSeedIds = [
@@ -400,7 +403,7 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
   const starfield: Starfield = {
     id: existing?.starfield.id ?? starfieldId(allSeedIds),
     name: opts.name ?? existing?.starfield.name ?? seedWork?.title ?? "未命名星空",
-    ownerId: "local",
+    ownerId,
     seeds: existing?.starfield.seeds ?? [],
     createdAt: existing?.starfield.createdAt ?? new Date().toISOString(),
     updatedAt: new Date().toISOString(),
@@ -478,12 +481,13 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
   for (let round = 1; round <= depth; round++) {
     finished = false;
     const running = buildSemanticEdges(poolPapers, {
+      ownerId,
       presets,
       seedOaIds: allSeedIds,
       centerOaIds: [...centers],
       skipPairs: judgedPairs,
-      // 逐层收窄预算:第一层把主要关系找全,后续层只做补充
-      maxJudgedPerPreset: round === 1 ? judgeDepth : Math.max(4, Math.round(judgeDepth / 2)),
+      // 逐层收窄预算。成本单位是论文对 —— 一对只问一次,能带回多条关系。
+      maxPairs: round === 1 ? judgeDepth * 2 : Math.max(8, judgeDepth),
       onEdges: absorb,
     }).then((r) => {
       finished = true;
@@ -527,7 +531,8 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
       type: "progress",
       round,
       depth,
-      judged: Object.values(relations.perPreset).reduce((s, v) => s + v.judged, 0),
+      // 多标签下 perPreset.judged 是「关系 × 论文对」;进度条要的是真实论文对数
+      judged: relations.judgedPairs.length,
       matched: Object.values(relations.perPreset).reduce((s, v) => s + v.matched, 0),
       llmCalls: relations.llmCalls,
       estimatedTokens: relations.estimatedTokens,
@@ -585,7 +590,7 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
   const meta: BuildMeta = {
     quality,
     relations,
-    capabilities: await capabilityReport(),
+    capabilities: await capabilityReport(ownerId),
     builtAt: new Date().toISOString(),
     durationMs: Date.now() - started,
     addedPapers,
@@ -599,7 +604,7 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
     meta,
   };
 
-  await saveStarfield(payload);
+  await saveStarfield(payload, ownerId);
   yield { type: "done", payload };
 }
 

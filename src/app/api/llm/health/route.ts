@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/server/auth/require";
 import { z } from "zod";
 
 import { chatJson } from "@/server/llm/client";
@@ -7,6 +8,8 @@ import {
   resolveModelById,
   resolveServiceModel,
 } from "@/server/model-settings";
+import { checkLimit } from "@/server/safety/limits";
+import { MODEL_PROVIDER_IDS } from "@/types/model-settings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -19,7 +22,7 @@ const Probe = z.object({
 const bodySchema = z.object({
   modelId: z.string().min(1).optional(),
   accountId: z.string().min(1).optional(),
-  provider: z.enum(["openai", "anthropic", "deepseek", "qwen", "custom"]).optional(),
+  provider: z.enum(MODEL_PROVIDER_IDS).optional(),
   baseUrl: z.string().url().optional(),
   apiKey: z.string().min(1).max(500).optional(),
   model: z.string().min(1).max(160).optional(),
@@ -27,13 +30,29 @@ const bodySchema = z.object({
 
 /** 带 modelId 时测试具体模型;不带时兼容旧客户端,测试关系判定服务。 */
 export async function POST(req: Request) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+
+  const limit = checkLimit(req, "health");
+  if (!limit.ok) {
+    return NextResponse.json(
+      { ok: false, error: limit.message, hint: limit.hint },
+      {
+        status: 429,
+        headers: limit.retryAfterSec
+          ? { "retry-after": String(limit.retryAfterSec) }
+          : undefined,
+      },
+    );
+  }
+
   const parsed = bodySchema.safeParse(await req.json().catch(() => ({})));
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "模型参数不正确" });
   }
 
   const saved = parsed.data.accountId
-    ? await resolveAccountCredentials(parsed.data.accountId)
+    ? await resolveAccountCredentials(auth.user.id, parsed.data.accountId)
     : null;
   const inlineProvider = parsed.data.provider ?? saved?.provider;
   const inlineBaseUrl = parsed.data.baseUrl ?? saved?.baseUrl;
@@ -53,8 +72,8 @@ export async function POST(req: Request) {
   const target = inline
     ? inline
     : parsed.data.modelId
-      ? await resolveModelById(parsed.data.modelId)
-      : await resolveServiceModel("relation");
+      ? await resolveModelById(auth.user.id, parsed.data.modelId)
+      : await resolveServiceModel(auth.user.id, "relation");
   if (!target) {
     return NextResponse.json(
       {
@@ -69,12 +88,15 @@ export async function POST(req: Request) {
   const started = Date.now();
   const result = await chatJson(
     {
+      ownerId: auth.user.id,
       modelId: parsed.data.modelId,
       target: inline ?? undefined,
       system: "你是一个连通性探针。只输出 JSON,不要任何解释。",
       user: '请回答:下面这句话里有几个字是「力」字?「力拔山兮气盖世」。只输出 {"ok": true, "answer": "数量"}',
       temperature: 0,
-      maxTokens: 60,
+      // 探针只输出一个短 JSON,但推理模型的 reasoning 也占这份预算 —— 60 会被推理吃光,
+      // 结果明明是通的却被判成"没有返回可解析的结果"。
+      maxTokens: 800,
       retries: 0,
     },
     Probe,

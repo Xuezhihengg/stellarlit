@@ -25,7 +25,7 @@ export function SecondaryPage({ title, subtitle, actions, children }: SecondaryP
               href="/"
               className="mb-4 inline-flex items-center gap-2 text-[11px] text-ink-4 transition-colors hover:text-ink-2"
             >
-              ← 回到星图
+              ← 返回首页
             </Link>
             <h1 className="text-[22px] tracking-[0.02em] text-ink">{title}</h1>
             {subtitle ? (

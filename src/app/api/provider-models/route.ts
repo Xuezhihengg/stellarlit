@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/server/auth/require";
 import { z } from "zod";
 
 import { inferModelModalities } from "@/lib/models/catalog";
 import { resolveAccountCredentials } from "@/server/model-settings";
+import { checkLimit } from "@/server/safety/limits";
+import { readJsonLimited, SMALL_JSON_BYTES } from "@/server/security/request-body";
+import { MODEL_PROVIDER_IDS } from "@/types/model-settings";
 
 export const dynamic = "force-dynamic";
 
 const schema = z.object({
   accountId: z.string().optional(),
-  provider: z.enum(["openai", "anthropic", "deepseek", "qwen", "custom"]),
+  provider: z.enum(MODEL_PROVIDER_IDS),
   baseUrl: z.string().url(),
   apiKey: z.string().optional(),
 });
@@ -20,13 +24,33 @@ interface ProviderModel {
 
 /** 拉取厂商真实模型列表;编辑已有账户时复用服务端保存的密钥。 */
 export async function POST(req: Request) {
-  const parsed = schema.safeParse(await req.json().catch(() => null));
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+
+  const limit = checkLimit(req, "health");
+  if (!limit.ok) {
+    return NextResponse.json(
+      { ok: false, error: limit.message ?? "请求过于频繁", hint: limit.hint, code: limit.code },
+      {
+        status: 429,
+        headers: limit.retryAfterSec
+          ? { "retry-after": String(limit.retryAfterSec) }
+          : undefined,
+      },
+    );
+  }
+
+  const body = await readJsonLimited(req, SMALL_JSON_BYTES);
+  if (!body.ok) {
+    return NextResponse.json({ ok: false, error: body.error, code: body.code }, { status: body.status });
+  }
+  const parsed = schema.safeParse(body.value);
   if (!parsed.success) {
     return NextResponse.json({ ok: false, error: "连接参数不正确" }, { status: 400 });
   }
 
   const saved = parsed.data.accountId
-    ? await resolveAccountCredentials(parsed.data.accountId)
+    ? await resolveAccountCredentials(auth.user.id, parsed.data.accountId)
     : null;
   const provider = parsed.data.provider || saved?.provider;
   const baseUrl = (parsed.data.baseUrl || saved?.baseUrl || "").replace(/\/+$/, "");
@@ -63,7 +87,13 @@ export async function POST(req: Request) {
     const body = (await res.json()) as { data?: ProviderModel[] };
     const models = (body.data ?? [])
       .map((item) => item.id)
-      .filter((id) => id && !/(embedding|rerank|tts|asr|whisper|dall-e|image-generation)/i.test(id))
+      .filter(
+        (id) =>
+          id &&
+          !/(embedding|rerank|tts|asr|whisper|dall-e|image-generation|speech|livetranslate|s2s|ocr|audio|(^|[-/])image([-/]|$))/i.test(
+            id,
+          ),
+      )
       .map((id) => ({
         id,
         name: body.data?.find((item) => item.id === id)?.display_name ?? id,

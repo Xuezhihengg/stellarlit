@@ -11,11 +11,14 @@
 
 import type { RelationPreset } from "@/types/kg";
 
+import { BUILTIN_EDGE_KIND, edgeKindOf } from "@/lib/graph/edge-kinds";
+
 export const BUILTIN_PRESETS: RelationPreset[] = [
   {
     id: "baseline",
     label: "基线",
     labelEn: "Baseline",
+    family: "lineage",
     description: "前者是该方向公认的基线方法,后者以它为对照并试图超越。",
     definition:
       "判定 A 是 B 的基线:应同时满足 —— ① B 明确把 A 作为对比对象或出发点;" +
@@ -32,7 +35,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     },
     evidencePolicy: "structural",
     visual: { tone: "var(--ink-2)", dash: "none" },
-    promptVersion: "baseline@1",
+    promptVersion: "baseline@2",
     enabled: true,
     maxPerSeed: 6,
     builtin: true,
@@ -41,6 +44,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     id: "contemporary",
     label: "同期",
     labelEn: "Contemporary",
+    family: "comparison",
     description: "同一时期并行出现、解决相邻问题,但彼此没有互相引用。",
     definition:
       "判定 A 与 B 同期:① 发表年份相差不超过 2 年;② 面向相邻或相同的任务;" +
@@ -57,7 +61,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     },
     evidencePolicy: "structural",
     visual: { tone: "var(--ink-3)", dash: "2 6" },
-    promptVersion: "contemporary@1",
+    promptVersion: "contemporary@2",
     enabled: true,
     maxPerSeed: 8,
     builtin: true,
@@ -66,6 +70,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     id: "similar",
     label: "思路类似",
     labelEn: "Similar approach",
+    family: "comparison",
     description: "核心思路同源,可能是把同一种机制用在了不同任务上。",
     definition:
       "判定 A 与 B 思路类似:① 两者的核心机制(而非表面关键词)相同或高度同构;" +
@@ -83,11 +88,11 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
        * 阈值定在 0.35 时实测把整类关系筛成了空集 —— 阈值要贴着指标的尺度定,
        * 而不是照着"感觉上应该像"的直觉定。
        */
-      minSimilarity: 0.2,
+      minSimilarity: 0.15,
     },
     evidencePolicy: "textual",
     visual: { tone: "var(--accent)", dash: "none" },
-    promptVersion: "similar@1",
+    promptVersion: "similar@2",
     enabled: true,
     maxPerSeed: 6,
     builtin: true,
@@ -96,6 +101,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     id: "alternative",
     label: "同任务异方法",
     labelEn: "Alternative method",
+    family: "comparison",
     description: "面向同一个任务,但技术路线明显不同。",
     definition:
       "判定 A 与 B 是同一任务的不同方法:① 两者解决的任务明确相同(可指向同一个 benchmark);" +
@@ -110,7 +116,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     },
     evidencePolicy: "textual",
     visual: { tone: "var(--warm)", dash: "none" },
-    promptVersion: "alternative@1",
+    promptVersion: "alternative@2",
     enabled: true,
     maxPerSeed: 6,
     builtin: true,
@@ -119,6 +125,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     id: "extends",
     label: "扩展",
     labelEn: "Extends",
+    family: "lineage",
     description: "后者在前者的基础上做了直接改进。",
     definition:
       "判定 B 扩展 A:① B 明确声称改进或拓展了 A;② 有可指认的具体改动(新模块、新约束、新训练目标);" +
@@ -134,7 +141,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     },
     evidencePolicy: "structural",
     visual: { tone: "var(--accent)", dash: "none" },
-    promptVersion: "extends@1",
+    promptVersion: "extends@2",
     enabled: true,
     maxPerSeed: 6,
     builtin: true,
@@ -143,6 +150,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     id: "contradicts",
     label: "结论矛盾",
     labelEn: "Contradicts",
+    family: "conflict",
     description: "在可比条件下得到相反结论的两篇工作。",
     definition:
       "判定 A 与 B 结论矛盾:① 两者针对同一个可比较的问题;" +
@@ -159,7 +167,7 @@ export const BUILTIN_PRESETS: RelationPreset[] = [
     },
     evidencePolicy: "textual",
     visual: { tone: "var(--alert)", dash: "none" },
-    promptVersion: "contradicts@1",
+    promptVersion: "contradicts@2",
     enabled: true,
     maxPerSeed: 3,
     builtin: true,
@@ -170,18 +178,6 @@ export const PRESETS_BY_ID: Record<string, RelationPreset> = Object.fromEntries(
   BUILTIN_PRESETS.map((p) => [p.id, p]),
 );
 
-/** 关系预设 → 语义边的 kind。名字不同是因为边的 kind 是编译期常量,预设 id 可被用户扩展。 */
-export const PRESET_TO_EDGE_KIND = {
-  baseline: "BASELINE_OF",
-  contemporary: "CONTEMPORARY_OF",
-  similar: "SIMILAR_APPROACH",
-  alternative: "ALTERNATIVE_TO",
-  extends: "EXTENDS",
-  contradicts: "CONTRADICTS",
-} as const;
-
-export type BuiltinPresetId = keyof typeof PRESET_TO_EDGE_KIND;
-
-export function edgeKindOf(presetId: string): string {
-  return PRESET_TO_EDGE_KIND[presetId as BuiltinPresetId] ?? presetId.toUpperCase();
-}
+/** 关系预设 → 语义边的 kind。映射本身放在 lib,客户端图例与详情面板也要用。 */
+export const PRESET_TO_EDGE_KIND = BUILTIN_EDGE_KIND;
+export { edgeKindOf };

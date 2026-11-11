@@ -13,15 +13,33 @@ import type {
   ResolveSeedResponse,
   StarfieldPayload,
 } from "@/types/api";
+import type {
+  AccountOverviewDto,
+  AccountUser,
+  UsageSnapshotDto,
+} from "@/types/account";
 import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
+import type { McpTokenCreateResult, McpTokenSummary } from "@/types/mcp";
 import type {
   ModelModality,
   ModelProviderId,
   ModelSettingsDto,
   SaveModelSettingsRequest,
 } from "@/types/model-settings";
-import type { AskEvent, AskRequest, AskSource, AskSuggestion } from "@/types/rag";
+import type {
+  AskDecision,
+  AskEvent,
+  AskHistoryEntry,
+  AskHistorySummary,
+  AskImageIndexStats,
+  AskRequest,
+  AskSource,
+  AskStep,
+  AskSuggestion,
+  ImageEvidence,
+} from "@/types/rag";
 import type { Starfield } from "@/types/starfield";
+import { navigateWithFade } from "@/lib/navigation/transition";
 
 /** 带可行动提示的错误。界面直接展示 message 与 hint。 */
 export class ApiRequestError extends Error {
@@ -37,7 +55,12 @@ export class ApiRequestError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+interface RequestOptions {
+  /** 401 时是否跳到登录页。登录/注册接口自己是「预期会 401」的,要关掉。 */
+  redirectOnUnauthorized?: boolean;
+}
+
+async function request<T>(path: string, init?: RequestInit, options?: RequestOptions): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path, {
@@ -57,6 +80,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
 
   if (!res.ok) {
+    if (res.status === 401 && options?.redirectOnUnauthorized !== false && typeof window !== "undefined") {
+      const url = new URL("/login", window.location.origin);
+      url.searchParams.set("next", `${window.location.pathname}${window.location.search}`);
+      navigateWithFade(url.toString(), { replace: true });
+    }
     const err = data as ApiError;
     throw new ApiRequestError(
       err.error ?? `请求失败(${res.status})`,
@@ -78,6 +106,23 @@ export async function fetchPresets(): Promise<RelationPreset[]> {
   return res.presets;
 }
 
+/** 服务端保存的自定义预设;没有改过时返回 null。 */
+export async function fetchPresetOverrides(): Promise<RelationPreset[] | null> {
+  const res = await request<{ overrides: RelationPreset[] | null }>("/api/presets");
+  return res.overrides;
+}
+
+export async function savePresetOverrides(presets: RelationPreset[]): Promise<void> {
+  await request<{ overrides: RelationPreset[] | null }>("/api/presets", {
+    method: "PUT",
+    body: JSON.stringify({ presets }),
+  });
+}
+
+export async function clearPresetOverridesRemote(): Promise<void> {
+  await request<{ ok: boolean }>("/api/presets", { method: "DELETE" });
+}
+
 export interface LlmHealth {
   ok: boolean;
   model?: string;
@@ -90,7 +135,7 @@ export interface LlmHealth {
 export interface LlmTestTarget {
   modelId?: string;
   accountId?: string;
-  provider?: "openai" | "anthropic" | "deepseek" | "qwen" | "custom";
+  provider?: ModelProviderId;
   baseUrl?: string;
   apiKey?: string;
   model?: string;
@@ -120,6 +165,44 @@ export function saveModelSettings(
   return request<ModelSettingsDto>("/api/model-settings", {
     method: "PUT",
     body: JSON.stringify(settings),
+  });
+}
+
+export interface EmbeddingHealth {
+  ok: boolean;
+  dimensions?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
+/** 测试当前账户与向量模型是否真的能返回 embedding。 */
+export function testEmbedding(input: {
+  accountId: string;
+  model: string;
+}): Promise<EmbeddingHealth> {
+  return request<EmbeddingHealth>("/api/embedding/health", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export interface ProviderConnectResponse {
+  ok: boolean;
+  latencyMs?: number;
+  message?: string;
+  error?: string;
+}
+
+/** 只测 Base URL + Key 的连通性,不拉模型清单。 */
+export function probeProvider(input: {
+  accountId?: string;
+  provider: ModelProviderId;
+  baseUrl: string;
+  apiKey?: string;
+}): Promise<ProviderConnectResponse> {
+  return request<ProviderConnectResponse>("/api/provider-connect", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 
@@ -202,7 +285,15 @@ export async function growStarfieldStream(
       signal,
     });
   } catch {
-    handlers.onError("无法连接到服务端");
+    if (!signal?.aborted) handlers.onError("无法连接到服务端");
+    return;
+  }
+
+  if (res.status === 401) {
+    const url = new URL("/login", window.location.origin);
+    url.searchParams.set("next", `${window.location.pathname}${window.location.search}`);
+    navigateWithFade(url.toString(), { replace: true });
+    handlers.onError("登录已过期,请重新登录");
     return;
   }
 
@@ -309,11 +400,21 @@ export function translateText(text: string): Promise<{ text: string }> {
 
 export interface AskHandlers {
   onSources: (sources: AskSource[]) => void;
+  /** 附图 OCR / 表格 / 图表块;在 sources 之后、答案之前到达 */
+  onImageEvidence?: (
+    evidence: ImageEvidence[],
+    stats: AskImageIndexStats,
+  ) => void;
+  /** Agent 执行轨迹:每一步先 running,结束后变成 done/empty/failed */
+  onActivity?: (step: AskStep) => void;
+  /** 每轮结束后的继续/停止判定 */
+  onDecision?: (decision: AskDecision) => void;
   onDelta: (text: string) => void;
   onDone: (
     citations: number[],
     fallback: boolean,
     suggestions: AskSuggestion[],
+    fallbackReason?: string,
   ) => void;
   onError: (message: string) => void;
 }
@@ -343,9 +444,19 @@ export async function askStarfield(
     return;
   }
 
+  if (res.status === 401) {
+    const url = new URL("/login", window.location.origin);
+    url.searchParams.set("next", `${window.location.pathname}${window.location.search}`);
+    navigateWithFade(url.toString(), { replace: true });
+    handlers.onError("登录已过期,请重新登录");
+    return;
+  }
+
   if (!res.ok || !res.body) {
     const err = (await res.json().catch(() => ({}))) as ApiError;
-    handlers.onError(err.error ?? `请求失败(${res.status})`);
+    // 限流/护栏的拒绝都带「下一步怎么办」,拼在同一行里,避免界面只显示一句冷冰冰的错误。
+    const message = err.error ?? `请求失败(${res.status})`;
+    handlers.onError(err.hint ? `${message} · ${err.hint}` : message);
     return;
   }
 
@@ -376,9 +487,19 @@ export async function askStarfield(
         }
 
         if (event.type === "sources") handlers.onSources(event.sources);
+        else if (event.type === "imageEvidence") {
+          handlers.onImageEvidence?.(event.evidence, event.stats);
+        }
+        else if (event.type === "activity") handlers.onActivity?.(event.step);
+        else if (event.type === "decision") handlers.onDecision?.(event.decision);
         else if (event.type === "delta") handlers.onDelta(event.text);
         else if (event.type === "done") {
-          handlers.onDone(event.citations, Boolean(event.fallback), event.suggestions ?? []);
+          handlers.onDone(
+            event.citations,
+            Boolean(event.fallback),
+            event.suggestions ?? [],
+            event.fallbackReason,
+          );
         } else if (event.type === "error") handlers.onError(event.message);
       }
     }
@@ -387,4 +508,149 @@ export async function askStarfield(
   } finally {
     reader.releaseLock();
   }
+}
+
+/**
+ * 问答历史 —— 服务端是主副本,本地缓存只是「秒开」。
+ *
+ * 失败一律静默:保存历史失败不该让用户刚看到的回答消失。
+ */
+export async function fetchAskHistory(starfieldId: string): Promise<AskHistorySummary[]> {
+  const res = await request<{ entries: AskHistorySummary[] }>(
+    `/api/ask/history?starfieldId=${encodeURIComponent(starfieldId)}`,
+  );
+  return res.entries;
+}
+
+/** 列表只带摘要;真正回放某一条时再取完整详情。 */
+export async function fetchAskHistoryEntry(
+  starfieldId: string,
+  id: string,
+): Promise<AskHistoryEntry> {
+  const query = new URLSearchParams({ starfieldId, id });
+  const res = await request<{ entry: AskHistoryEntry }>(
+    `/api/ask/history?${query.toString()}`,
+  );
+  return res.entry;
+}
+
+export async function saveAskHistory(
+  starfieldId: string,
+  entry: AskHistoryEntry,
+): Promise<void> {
+  await request<{ ok: boolean }>("/api/ask/history", {
+    method: "POST",
+    body: JSON.stringify({ starfieldId, entry }),
+  });
+}
+
+export async function clearAskHistory(starfieldId: string, id?: string): Promise<void> {
+  const query = new URLSearchParams({ starfieldId });
+  if (id) query.set("id", id);
+  await request<{ removed: number }>(`/api/ask/history?${query.toString()}`, {
+    method: "DELETE",
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 账号
+// ---------------------------------------------------------------------------
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  name: string;
+  createdAt: string;
+}
+
+export interface ClaimedData {
+  starfields: number;
+  history: number;
+  presets: number;
+}
+
+export async function fetchMe(): Promise<AuthUser | null> {
+  const res = await request<{ user: AuthUser | null }>("/api/auth/me", undefined, {
+    redirectOnUnauthorized: false,
+  });
+  return res.user;
+}
+
+export async function loginAccount(email: string, password: string): Promise<AuthUser> {
+  const res = await request<{ user: AuthUser }>(
+    "/api/auth/login",
+    { method: "POST", body: JSON.stringify({ email, password }) },
+    { redirectOnUnauthorized: false },
+  );
+  return res.user;
+}
+
+export async function registerAccount(input: {
+  email: string;
+  password: string;
+  name?: string;
+}): Promise<{ user: AuthUser; claimed: ClaimedData }> {
+  return request<{ user: AuthUser; claimed: ClaimedData }>(
+    "/api/auth/register",
+    { method: "POST", body: JSON.stringify(input) },
+    { redirectOnUnauthorized: false },
+  );
+}
+
+export async function logoutAccount(): Promise<void> {
+  await request<{ ok: boolean }>("/api/auth/logout", { method: "POST" }, {
+    redirectOnUnauthorized: false,
+  });
+}
+
+export function fetchUsage(): Promise<UsageSnapshotDto> {
+  return request<UsageSnapshotDto>("/api/usage");
+}
+
+export function fetchAccount(): Promise<AccountOverviewDto> {
+  return request<AccountOverviewDto>("/api/account");
+}
+
+export async function updateAccountName(name: string): Promise<AccountUser> {
+  const res = await request<{ user: AccountUser }>("/api/account", {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+  return res.user;
+}
+
+export async function changeAccountPassword(input: {
+  currentPassword: string;
+  newPassword: string;
+}): Promise<void> {
+  await request<{ ok: boolean }>("/api/account/password", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function revokeAllSessions(): Promise<void> {
+  await request<{ ok: boolean }>("/api/account/sessions", { method: "DELETE" });
+}
+
+// ---------------------------------------------------------------------------
+// MCP 个人令牌
+// ---------------------------------------------------------------------------
+
+export async function fetchMcpTokens(): Promise<McpTokenSummary[]> {
+  const res = await request<{ tokens: McpTokenSummary[] }>("/api/mcp/tokens");
+  return res.tokens;
+}
+
+export function createMcpToken(name: string): Promise<McpTokenCreateResult> {
+  return request<McpTokenCreateResult>("/api/mcp/tokens", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export async function revokeMcpToken(id: string): Promise<void> {
+  await request<{ ok: boolean }>(`/api/mcp/tokens?id=${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
 }

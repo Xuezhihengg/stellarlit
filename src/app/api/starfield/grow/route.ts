@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/server/auth/require";
+import { checkBudget, checkLimit } from "@/server/safety/limits";
+import { readPresetOverrides } from "@/server/db/presets";
 import { z } from "zod";
 
-import type { ApiError, GrowResponse } from "@/types/api";
+import type { ApiError } from "@/types/api";
 
 import { UpstreamError } from "@/server/http";
 import { growStarfield } from "@/server/starfield/grow";
 import { RelationPresetSchema } from "@/server/relations/schema";
+import { MAX_RELATION_PRESETS } from "@/lib/presets/custom";
 
 /**
  * 构建星空是最重的操作:要抓取邻域、跑社区检测与布局,还可能调用大模型判定关系。
@@ -21,10 +25,29 @@ const Body = z.object({
   budget: z.number().int().min(40).max(600).optional(),
   pool: z.number().int().min(6).max(200).optional(),
   judgeDepth: z.number().int().min(4).max(40).optional(),
-  presets: z.array(RelationPresetSchema).max(24).optional(),
+  presets: z.array(RelationPresetSchema).max(MAX_RELATION_PRESETS).optional(),
 });
 
-export async function POST(req: Request): Promise<NextResponse<GrowResponse | ApiError>> {
+export async function POST(req: Request): Promise<Response> {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+
+  const budget = await checkBudget(auth.user.id);
+  if (!budget.ok) {
+    return NextResponse.json(
+      { error: budget.message, hint: budget.hint, code: budget.code, usage: budget.snapshot },
+      { status: 429 },
+    );
+  }
+
+  const limit = checkLimit(req, "grow");
+  if (!limit.ok) {
+    return NextResponse.json(
+      { error: limit.message ?? "请求过于频繁", hint: limit.hint, code: limit.code } as ApiError,
+      { status: 429, headers: limit.retryAfterSec ? { "retry-after": String(limit.retryAfterSec) } : undefined },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -41,7 +64,11 @@ export async function POST(req: Request): Promise<NextResponse<GrowResponse | Ap
   }
 
   try {
-    const payload = await growStarfield(parsed.data);
+    // 客户端没带预设时,用服务端保存的自定义口径 —— 否则换了台机器就会悄悄退回内置判定
+    const input = parsed.data.presets?.length
+      ? parsed.data
+      : { ...parsed.data, presets: (await readPresetOverrides(auth.user.id)) ?? undefined };
+    const payload = await growStarfield({ ...input, ownerId: auth.user.id });
     return NextResponse.json(payload);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

@@ -16,6 +16,7 @@ export const RelationPresetSchema = z.object({
     .regex(/^[a-z][a-z0-9-]*$/, "预设 id 只能是小写字母、数字与连字符"),
   label: z.string().min(1).max(24),
   labelEn: z.string().min(1).max(48),
+  family: z.enum(["lineage", "comparison", "conflict", "custom"]).optional(),
   description: z.string().min(1).max(400),
   definition: z.string().min(1).max(2000),
   negativeExamples: z.string().min(1).max(2000),
@@ -24,10 +25,10 @@ export const RelationPresetSchema = z.object({
     .object({
       requireCitation: z.boolean().optional(),
       requireMutualNonCitation: z.boolean().optional(),
-      maxYearGap: z.number().int().min(0).max(60).optional(),
+      maxYearGap: z.number().int().min(0).max(60).nullable().optional(),
       requireSharedTask: z.boolean().optional(),
       requireSharedMethod: z.boolean().optional(),
-      minSimilarity: z.number().min(0).max(1).optional(),
+      minSimilarity: z.number().min(0).max(1).nullable().optional(),
     })
     .default({}),
   evidencePolicy: z.enum(["structural", "textual"]),

@@ -127,6 +127,7 @@ export function StarMap({
       selectedId,
       dimmedKinds,
       minYear,
+      presets: payload.presets,
     });
   }, [payload, selectedId, dimmedKinds, minYear]);
 
@@ -421,6 +422,8 @@ export function StarMap({
   // 渲染循环
   // ---------------------------------------------------------------------
   const levelRef = useRef<ViewLevel>("paper");
+  /** 画布是否已经因为「没有星空」而清空过,避免空状态下每帧重复 clearRect */
+  const blankRef = useRef(false);
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
@@ -468,6 +471,7 @@ export function StarMap({
 
         const sceneNow = liveRef.current.scene;
         if (sceneNow) {
+          blankRef.current = false;
           const dpr = sizeRef.current.dpr;
           ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
           // 先把动画推进一帧,再绘制 —— 顺序反了会慢一帧,快速操作时看得出来
@@ -499,6 +503,16 @@ export function StarMap({
                 ? focusRef.current.ids[1] ?? null
                 : null,
           });
+        } else if (!blankRef.current) {
+          /**
+           * 新建星空后 payload 变回 null,但 Canvas 不会自己忘掉上一帧。
+           * 这里主动清空,否则标题已经变成「还没有星空」,画面上却还留着
+           * 上一片星空的星体和标签 —— 看起来像新建失败。
+           */
+          const dpr = sizeRef.current.dpr;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          ctx.clearRect(0, 0, w, h);
+          blankRef.current = true;
         }
 
       }

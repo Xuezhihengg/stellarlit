@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 interface BuildStatusProps {
   /** 正在做什么,例如「正在展开引文邻域」 */
@@ -10,6 +10,8 @@ interface BuildStatusProps {
   total?: number;
   /** 实时细节:第几层、判定了多少对、找到多少条关系 */
   detail?: string;
+  /** 自定义细节区:解析种子时展示输入类型与消歧步骤 */
+  children?: ReactNode;
 }
 
 /**
@@ -19,7 +21,7 @@ interface BuildStatusProps {
  * 用户不知道系统在做什么,就会怀疑它卡住了。
  * 所以这里既说明**当前在做什么**,也用秒表让对方知道它确实在动。
  */
-export function BuildStatus({ label, step = 1, total = 4, detail }: BuildStatusProps) {
+export function BuildStatus({ label, step = 1, total = 4, detail, children }: BuildStatusProps) {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
@@ -46,10 +48,12 @@ export function BuildStatus({ label, step = 1, total = 4, detail }: BuildStatusP
         ))}
       </div>
 
-      <p className="text-[10.5px] leading-relaxed text-ink-4">
-        {detail ??
-          "正在抓取引文邻域、聚类研究前沿、计算布局。结果会缓存,同一片星空再次打开是瞬时的。"}
-      </p>
+      {children ?? (
+        <p className="text-[10.5px] leading-relaxed text-ink-4">
+          {detail ??
+            "正在抓取引文邻域、聚类研究前沿、计算布局。结果会缓存,同一片星空再次打开是瞬时的。"}
+        </p>
+      )}
     </div>
   );
 }

@@ -1,10 +1,14 @@
 import { z } from "zod";
+import { requireUser } from "@/server/auth/require";
+import { checkBudget, checkLimit } from "@/server/safety/limits";
+import { readPresetOverrides } from "@/server/db/presets";
 
 import type { ApiError, GrowRequest } from "@/types/api";
 
 import { UpstreamError } from "@/server/http";
 import { growStarfieldStream } from "@/server/starfield/grow";
 import { RelationPresetSchema } from "@/server/relations/schema";
+import { MAX_RELATION_PRESETS } from "@/lib/presets/custom";
 
 /**
  * 流式构建。
@@ -28,10 +32,29 @@ const Body = z.object({
   pool: z.number().int().min(6).max(200).optional(),
   judgeDepth: z.number().int().min(4).max(40).optional(),
   depth: z.number().int().min(1).max(3).optional(),
-  presets: z.array(RelationPresetSchema).max(24).optional(),
+  presets: z.array(RelationPresetSchema).max(MAX_RELATION_PRESETS).optional(),
 });
 
 export async function POST(req: Request): Promise<Response> {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+
+  const budget = await checkBudget(auth.user.id);
+  if (!budget.ok) {
+    return Response.json(
+      { error: budget.message ?? "今日 token 预算已用完", hint: budget.hint, code: budget.code } satisfies ApiError,
+      { status: 429 },
+    );
+  }
+
+  const limit = checkLimit(req, "grow");
+  if (!limit.ok) {
+    return Response.json(
+      { error: limit.message ?? "请求过于频繁", hint: limit.hint, code: limit.code } satisfies ApiError,
+      { status: 429, headers: limit.retryAfterSec ? { "retry-after": String(limit.retryAfterSec) } : undefined },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();
@@ -48,7 +71,12 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const encoder = new TextEncoder();
-  const input: GrowRequest & { depth?: number } = parsed.data;
+  const input: GrowRequest & { depth?: number; ownerId: string } = {
+    ...(parsed.data.presets?.length
+      ? parsed.data
+      : { ...parsed.data, presets: (await readPresetOverrides(auth.user.id)) ?? undefined }),
+    ownerId: auth.user.id,
+  };
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {

@@ -60,13 +60,15 @@ export function stepAnim(
 ): void {
   for (const n of scene.nodes) {
     const target = n.dimmed && !n.hovered && !n.selected ? 0.16 : 1;
-    anim.nodeAlpha.set(n.id, approach(anim.nodeAlpha.get(n.id) ?? 1, target, dt, 7));
+    // 首次出现的节点从透明开始:新增论文会真正"亮起来",而不是瞬现
+    anim.nodeAlpha.set(n.id, approach(anim.nodeAlpha.get(n.id) ?? 0, target, dt, 4.2));
   }
   for (const e of scene.edges) {
     // 被关掉的边留 12% 而不是归零:让"这里曾经有线"仍然可辨,
     // 也让重新打开时有一个明确的起点
     const target = e.faded ? 0.12 : 1;
-    anim.edgeAlpha.set(e.id, approach(anim.edgeAlpha.get(e.id) ?? 1, target, dt, 6));
+    // 新关系线也从 0 淡入;已有关系仍从当前值继续逼近目标
+    anim.edgeAlpha.set(e.id, approach(anim.edgeAlpha.get(e.id) ?? 0, target, dt, 3.2));
   }
 
   /**
@@ -103,6 +105,14 @@ export interface RenderInput {
   anim?: AnimState;
   /** 关系卡双论文聚焦时的"第二篇":画一圈同伴环,表示它也在焦点里 */
   companionId?: string | null;
+  /**
+   * 缩略图取景。
+   *
+   * 超大星空的「装下全部」会把缩放压到 0.1 以下,按正常语义缩放
+   * 星体会淡到 6%、关系线直接归零 —— 缩略图会变成一张空底图。
+   * 这个模式只固定可读的绘制浓度,几何、节点、边与标签规则都不变。
+   */
+  preview?: boolean;
 }
 
 /**
@@ -164,7 +174,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, input: RenderInput): vo
   const pointer = input.pointer ?? { x: 0, y: 0 };
   const anim = input.anim ?? createAnimState();
   const p = PALETTES[theme];
-  const a = levelAlpha(camera.scale);
+  const a = input.preview
+    ? { nebula: 0, blob: 0, edge: 0.35, node: 1, paperLabel: 0, domainLabel: 0 }
+    : levelAlpha(camera.scale);
 
   ctx.clearRect(0, 0, width, height);
 

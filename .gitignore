@@ -21,5 +21,12 @@ next-env.d.ts
 
 # 本地预计算缓存:可由上游重建,不入库
 /data/cache/
+/data/image-index/
+/data/media/
 /data/model-settings.json
 /data/model-settings.json.tmp
+
+# 本地数据库(含模型密钥与用户历史,绝不入库)
+/data/stellarlit.db
+/data/stellarlit.db-wal
+/data/stellarlit.db-shm

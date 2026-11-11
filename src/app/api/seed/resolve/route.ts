@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { checkLimit } from "@/server/safety/limits";
 import { z } from "zod";
 
 import type { ApiError, ResolveSeedResponse } from "@/types/api";
@@ -15,6 +16,14 @@ const Body = z.object({
 });
 
 export async function POST(req: Request): Promise<NextResponse<ResolveSeedResponse | ApiError>> {
+  const limit = checkLimit(req, "resolve");
+  if (!limit.ok) {
+    return NextResponse.json(
+      { error: limit.message ?? "请求过于频繁", hint: limit.hint, code: limit.code } as ApiError,
+      { status: 429, headers: limit.retryAfterSec ? { "retry-after": String(limit.retryAfterSec) } : undefined },
+    );
+  }
+
   let body: unknown;
   try {
     body = await req.json();

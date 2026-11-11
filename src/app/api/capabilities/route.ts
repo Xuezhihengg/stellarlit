@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/server/auth/require";
 
 import { capabilityReport } from "@/server/model-settings";
 
@@ -10,6 +11,8 @@ import { capabilityReport } from "@/server/model-settings";
  */
 export const dynamic = "force-dynamic";
 
-export async function GET() {
-  return NextResponse.json(await capabilityReport());
+export async function GET(req: Request) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  return NextResponse.json(await capabilityReport(auth.user.id));
 }

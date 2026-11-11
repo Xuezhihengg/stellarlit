@@ -1,5 +1,7 @@
 import type { SeedCandidate } from "@/types/starfield";
 
+import { formatPaperTitle } from "@/lib/format";
+
 interface SeedConfirmProps {
   candidates: SeedCandidate[];
   onPick: (c: SeedCandidate) => void;
@@ -39,7 +41,9 @@ export function SeedConfirm({ candidates, onPick, onDismiss }: SeedConfirmProps)
               className="group w-full rounded-lg border border-hair px-3 py-2.5 text-left transition-colors duration-[var(--dur-fast)] hover:border-accent/40"
             >
               <div className="flex items-start justify-between gap-2">
-                <span className="line-clamp-2 text-[12.5px] leading-snug text-ink">{c.title}</span>
+                <span className="line-clamp-2 text-[12.5px] leading-snug text-ink">
+                  {formatPaperTitle(c.title)}
+                </span>
                 <span className="mt-0.5 shrink-0 font-mono text-[10px] text-ink-4">
                   {(c.confidence * 100).toFixed(0)}%
                 </span>

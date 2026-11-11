@@ -12,11 +12,28 @@
     "check:tokens": "tsx scripts/check-tokens.ts",
     "check:label": "tsx scripts/check-label-layout.ts",
     "check:rag": "tsx scripts/check-rag.ts",
+    "check:multimodal": "tsx scripts/check-multimodal.ts",
+    "check:providers": "tsx scripts/check-providers.ts",
+    "check:relations": "tsx scripts/check-relations.ts",
     "probe": "tsx --env-file=.env.local scripts/relation-probe.mts",
-    "check": "pnpm typecheck && pnpm lint && pnpm check:tokens && pnpm check:label && pnpm check:rag"
+    "check": "pnpm typecheck && pnpm lint && pnpm check:tokens && pnpm check:label && pnpm check:rag && pnpm check:multimodal && pnpm check:providers && pnpm check:relations && pnpm check:mcp && pnpm check:agent && pnpm check:safety && pnpm check:crypto && pnpm check:cache && pnpm check:db && pnpm check:auth",
+    "check:mcp": "tsx --env-file-if-exists=.env.local scripts/check-mcp.ts",
+    "mcp": "tsx --env-file-if-exists=.env.local scripts/mcp-server.ts",
+    "check:agent": "tsx --env-file-if-exists=.env.local scripts/check-agent.ts",
+    "check:safety": "tsx scripts/check-safety.ts",
+    "check:db": "tsx --env-file-if-exists=.env.local scripts/check-db.ts",
+    "check:auth": "tsx --env-file-if-exists=.env.local scripts/check-auth.ts",
+    "key:generate": "tsx scripts/generate-encryption-key.ts",
+    "check:crypto": "tsx --env-file-if-exists=.env.local scripts/check-crypto.ts",
+    "check:cache": "tsx --env-file-if-exists=.env.local scripts/check-cache.ts",
+    "secrets:migrate": "tsx --env-file=.env.local scripts/migrate-secrets.ts",
+    "cleanup": "tsx --env-file-if-exists=.env.local scripts/cleanup.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "ioredis": "^6.0.0",
     "next": "15.5.27",
+    "pg": "^8.23.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "zod": "^3.25.76",
@@ -27,6 +44,7 @@
     "@next/eslint-plugin-next": "15.5.27",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@typescript-eslint/eslint-plugin": "^8.71.2",
@@ -42,6 +60,6 @@
     "typescript": "5.9.3"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   }
 }

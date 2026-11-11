@@ -36,6 +36,9 @@
   --dur-fast: 160ms;
   --dur-base: 280ms;
   --dur-slow: 620ms;
+  /* 两个"额外的"时长:退场与微交互要快,弹窗进场要慢一点才稳 */
+  --dur-quick: 200ms;
+  --dur-modal: 380ms;
 }
 
 :root[data-theme="light"] {
@@ -205,6 +208,675 @@ body::before {
 
 .ask-answer-enter {
   animation: ask-answer-enter var(--dur-base) var(--ease-out) both;
+}
+
+/* 构建收尾结束、切回操作指南:内容淡入并轻轻上浮,避免硬切 */
+@keyframes rail-guide-enter {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rail-guide-enter {
+  animation: rail-guide-enter 420ms var(--ease-out) both;
+}
+
+.rail-guide-enter > :nth-child(2) {
+  animation: rail-guide-enter var(--dur-base) var(--ease-out) 70ms both;
+}
+
+/* 构建清单按阶段逐条出现:新阶段从下方轻轻浮起 */
+@keyframes build-step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.build-step-enter {
+  animation: build-step-enter 360ms var(--ease-out) both;
+}
+
+/* 当前阶段缓慢呼吸,让视线知道构建正在推进 */
+@keyframes build-step-live {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.58;
+  }
+}
+
+.build-step-live {
+  animation: build-step-live 1.7s ease-in-out infinite;
+}
+
+/* Agent 轨迹:只淡入,不位移。新的一轮出现时也不把上面的内容推着晃。 */
+@keyframes agent-trace-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.agent-trace,
+.agent-round {
+  animation: agent-trace-in var(--dur-fast) var(--ease-out) both;
+}
+
+/* 决策轨迹按事件到达逐条浮现;同批多条时轻微错峰 */
+@keyframes agent-step-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.agent-step-enter {
+  animation: agent-step-enter 300ms var(--ease-out) both;
+}
+
+/* 结果出来后轨迹自动收起:高度与透明度一起过渡,不是瞬间消失。 */
+.agent-trace-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    opacity var(--dur-base) var(--ease-out);
+}
+
+.agent-trace-body[data-open="false"] {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+
+.agent-trace-body > div {
+  overflow: hidden;
+}
+
+/* 解析 / 构建状态卡上扫过一道很淡的光,证明请求还在动。 */
+@keyframes status-scan {
+  from {
+    transform: translateX(-130%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+
+.status-scan {
+  animation: status-scan 2.1s var(--ease-in-out) infinite;
+}
+
+/* 待发送图片:加进来时从略小处浮现,移除时先缩一下再消失 ——
+   直接删掉会让整行缩略图"跳"一下,有出有进才连得上。 */
+@keyframes ask-image-in {
+  from {
+    opacity: 0;
+    transform: scale(0.88);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes ask-image-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+.ask-image-enter {
+  animation: ask-image-in var(--dur-fast) var(--ease-out) both;
+}
+
+.ask-image-leave {
+  animation: ask-image-out var(--dur-fast) var(--ease-in-out) both;
+}
+
+/* 拖入图片时盖住整张问答卡:淡入而不是硬切 */
+@keyframes ask-drop-mask-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.ask-drop-mask {
+  animation: ask-drop-mask-in var(--dur-fast) var(--ease-out) both;
+}
+
+/* 复制成功的反馈:一圈从按钮边缘散开的光,外加文案轻轻浮现。
+   不缩放按钮本身,避免工具栏里的元素跟着抖。 */
+@keyframes copy-ring {
+  0% {
+    opacity: 0.85;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  100% {
+    opacity: 0;
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+.copy-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  animation: copy-ring var(--dur-base) var(--ease-out) both;
+}
+
+@keyframes copy-label-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.copy-label-in {
+  animation: copy-label-in var(--dur-fast) var(--ease-out) both;
+}
+
+/* 模型清单浮层:只淡入,不做位移 —— 弹窗里的内容不该跟着晃。 */
+@keyframes model-pop {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.model-pop {
+  animation: model-pop var(--dur-quick) var(--ease-out) both;
+}
+
+/* 页面切换:旧页淡入幕布,新页从幕布后浮现。
+   两者都只改变透明度,不做位移,避免整页内容像被拖动。 */
+@keyframes route-page-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.route-page {
+  min-height: 100dvh;
+  animation: route-page-in var(--dur-base) var(--ease-out) both;
+}
+
+.route-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: var(--bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-quick) var(--ease-in-out);
+  will-change: opacity;
+}
+
+.route-veil[data-phase="covering"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.route-veil[data-phase="revealing"] {
+  opacity: 0;
+  pointer-events: auto;
+}
+
+/* ===========================================================================
+   首页 ↔ 星图画布 —— 同一条时间线上的两次曝光
+
+   两者不换路由,所以不能靠整页刷新遮住断点。这里让旧页先淡出、
+   新页从更近距离浮起,中间叠一层很淡的星辉。只动透明度和极小的缩放,
+   不位移文字,避免"页面被搬走"的廉价感。
+   =========================================================================== */
+
+.workspace-layer {
+  position: absolute;
+  inset: 0;
+  transform-origin: 50% 46%;
+  will-change: opacity, transform;
+}
+
+.home-layer {
+  z-index: 2;
+}
+
+.canvas-layer {
+  z-index: 3;
+}
+
+@keyframes workspace-home-exit {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.012);
+  }
+}
+
+@keyframes workspace-home-enter {
+  from {
+    opacity: 0;
+    transform: scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes workspace-canvas-enter {
+  from {
+    opacity: 0;
+    transform: scale(1.026);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes workspace-canvas-exit {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.986);
+  }
+}
+
+.home-layer[data-phase="exit"] {
+  animation: workspace-home-exit 860ms var(--ease-out) both;
+  pointer-events: none;
+}
+
+.home-layer[data-phase="enter"] {
+  animation: workspace-home-enter 820ms var(--ease-out) both;
+}
+
+.canvas-layer[data-phase="enter"] {
+  animation: workspace-canvas-enter 860ms var(--ease-out) both;
+}
+
+.canvas-layer[data-phase="exit"] {
+  animation: workspace-canvas-exit 820ms var(--ease-out) both;
+  pointer-events: none;
+}
+
+/* 转场时从画面中心散开的一层星辉:把两次曝光接在一起,而不是黑场。 */
+.workspace-warp {
+  position: fixed;
+  inset: -12%;
+  z-index: 60;
+  pointer-events: none;
+  background: radial-gradient(
+    circle at 50% 46%,
+    color-mix(in srgb, var(--accent) 18%, transparent) 0%,
+    color-mix(in srgb, var(--accent) 6%, transparent) 26%,
+    transparent 60%
+  );
+  animation: workspace-warp 1120ms var(--ease-out) both;
+  will-change: opacity, transform;
+}
+
+@keyframes workspace-warp {
+  0% {
+    opacity: 0;
+    transform: scale(0.28);
+  }
+  18% {
+    opacity: 0.55;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(2.1);
+  }
+}
+
+/* 首页内容依次浮起;延迟由组件写在 style 上,避免每个元素一套 keyframes。 */
+@keyframes home-rise {
+  from {
+    opacity: 0;
+    transform: translateY(9px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.home-rise {
+  animation: home-rise 720ms var(--ease-out) both;
+}
+
+.home-seed-cloud {
+  transition:
+    opacity 280ms var(--ease-out),
+    transform 280ms var(--ease-out),
+    filter 280ms var(--ease-out);
+}
+
+.home-seed-cloud[data-visible="false"] {
+  opacity: 0;
+  transform: translateY(4px);
+  filter: blur(2px);
+  pointer-events: none;
+}
+
+/* 首页顶栏:让星图在品牌与账户控件背后轻微失焦,而不是用实色把它盖住。 */
+.home-topbar-glass {
+  position: absolute;
+  inset: -8px 0 -20px;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--bg) 26%, transparent) 0%,
+    color-mix(in srgb, var(--bg) 10%, transparent) 62%,
+    transparent 100%
+  );
+  -webkit-backdrop-filter: blur(15px) saturate(1.12);
+  backdrop-filter: blur(15px) saturate(1.12);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 58%, transparent 100%);
+}
+
+/* ===========================================================================
+   首页星空:单张真实星野画布
+
+   静态层(星点、连线、星云)只在尺寸或主题变化时绘制一次;
+   动态层只画沿线脉冲与闪烁星。避免数百个 DOM 动画节点
+   与大范围 blur 同时运行,这是首页流畅度的关键。
+   =========================================================================== */
+
+.home-hero-sky {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--bg);
+  contain: layout paint;
+}
+
+.home-hero-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.home-hero-canvas-static {
+  z-index: 0;
+}
+
+.home-hero-canvas-dynamic {
+  z-index: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-seed-cloud {
+    transition: none;
+  }
+}
+
+/* 画布等待第一版结构时的「种子星」:旋转的虚线轨道 + 呼吸的星核。 */
+.canvas-build-state {
+  pointer-events: none;
+  opacity: 0;
+  transition:
+    opacity 420ms var(--ease-out),
+    right var(--dur-slow) var(--ease-out);
+}
+
+.canvas-build-state[data-visible="true"] {
+  opacity: 1;
+}
+
+.canvas-build-seed {
+  position: relative;
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  color: var(--accent);
+}
+
+.canvas-build-orbit {
+  position: absolute;
+  inset: -21px;
+  border: 1px dashed color-mix(in srgb, var(--accent) 26%, transparent);
+  border-radius: 999px;
+  animation: canvas-build-orbit 22s linear infinite;
+}
+
+/* 第二圈轨道更远、更淡,反向慢转:让"正在生长"有层次,而不是单个圈在空转。 */
+.canvas-build-orbit-2 {
+  inset: -33px;
+  border-style: solid;
+  border-color: color-mix(in srgb, var(--accent) 10%, transparent);
+  animation: canvas-build-orbit-2 36s linear infinite;
+}
+
+.canvas-build-halo {
+  position: absolute;
+  inset: -16px;
+  border-radius: 999px;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--accent) 20%, transparent) 0%,
+    transparent 68%
+  );
+  animation: canvas-build-halo 2.8s ease-in-out infinite;
+}
+
+/* 中央构建时间线:每个阶段原地切换状态,不推挤其它阶段。 */
+.canvas-build-steps {
+  display: flex;
+  width: min(340px, calc(100vw - 72px));
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+}
+
+.canvas-build-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 8px 2px;
+  border-radius: 8px;
+  opacity: 0.34;
+  transition:
+    opacity 420ms var(--ease-out),
+    background-color 420ms var(--ease-out);
+}
+
+.canvas-build-step[data-state="done"] {
+  opacity: 0.78;
+}
+
+.canvas-build-step[data-state="active"] {
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 7%, transparent),
+    transparent 82%
+  );
+}
+
+.canvas-build-step:not(:last-child)::after {
+  position: absolute;
+  top: 27px;
+  bottom: -3px;
+  left: 7px;
+  width: 1px;
+  background: linear-gradient(to bottom, var(--hair-2), transparent);
+  content: "";
+}
+
+.canvas-build-mark {
+  position: relative;
+  display: grid;
+  width: 11px;
+  height: 11px;
+  flex: none;
+  place-items: center;
+  color: var(--accent);
+}
+
+.canvas-build-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 55%, var(--hair-2));
+  transition:
+    background-color 360ms var(--ease-out),
+    box-shadow 360ms var(--ease-out);
+}
+
+.canvas-build-step[data-state="active"] .canvas-build-dot {
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+.canvas-build-step[data-state="active"] .canvas-build-mark::before {
+  position: absolute;
+  inset: -4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 999px;
+  content: "";
+  animation: canvas-build-step-ping 1.9s ease-out infinite;
+}
+
+.canvas-build-label {
+  font-size: 10.5px;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: var(--ink-3);
+  transition: color 360ms var(--ease-out);
+}
+
+.canvas-build-step[data-state="active"] .canvas-build-label {
+  color: var(--ink);
+}
+
+.canvas-build-step[data-state="done"] .canvas-build-label {
+  color: var(--ink-2);
+}
+
+.canvas-build-hint {
+  max-width: 250px;
+  overflow: hidden;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--ink-4);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 360ms var(--ease-out);
+}
+
+.canvas-build-step[data-state="active"] .canvas-build-hint {
+  color: var(--ink-3);
+}
+
+.canvas-build-status {
+  margin-left: auto;
+  flex: none;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: var(--ink-4);
+}
+
+.canvas-build-step[data-state="active"] .canvas-build-status {
+  color: var(--accent);
+  animation: build-step-live 1.7s ease-in-out infinite;
+}
+
+.canvas-build-step[data-state="done"] .canvas-build-status {
+  color: color-mix(in srgb, var(--accent) 72%, var(--ink-4));
+}
+
+@keyframes canvas-build-step-ping {
+  0% {
+    opacity: 0.8;
+    transform: scale(0.65);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+
+@keyframes canvas-build-orbit {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes canvas-build-orbit-2 {
+  from {
+    transform: rotate(35deg);
+  }
+  to {
+    transform: rotate(-325deg);
+  }
+}
+
+@keyframes canvas-build-halo {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 0.95;
+    transform: scale(1.12);
+  }
 }
 
 /* 细滚动条:面板里那一条几乎看不见的线就够了 */

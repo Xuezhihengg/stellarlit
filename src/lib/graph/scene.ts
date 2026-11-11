@@ -6,8 +6,12 @@
  * 而调布局也不需要动渲染代码。
  */
 
-import type { Graph, GraphEdge, GraphLayout, NodeId, Vec2 } from "@/types/kg";
+import type { Graph, GraphEdge, GraphLayout, NodeId, RelationPreset, Vec2 } from "@/types/kg";
 import type { ViewLevel } from "@/types/starfield";
+
+import { formatPaperTitle } from "@/lib/format";
+
+import { presetOfEdgeKind } from "./edge-kinds";
 
 export interface SceneNode {
   id: NodeId;
@@ -192,6 +196,8 @@ export interface SceneOptions {
   dimmedKinds?: ReadonlySet<string>;
   /** 只保留这个年份之后的工作;null 表示不限 */
   minYear?: number | null;
+  /** 关系预设:自定义关系靠它把 CUSTOM_X 还原成用户写的名称与色调 */
+  presets?: readonly RelationPreset[];
 }
 
 /**
@@ -216,6 +222,19 @@ const EDGE_TONE: Record<string, EdgeToneKey> = {
   CONTRADICTS: "alert",
   POTENTIAL_LINK: "warm",
 };
+
+const TOKEN_TONE: Record<string, EdgeToneKey> = {
+  "var(--ink-4)": "ink4",
+  "var(--ink-3)": "ink3",
+  "var(--ink-2)": "ink2",
+  "var(--accent)": "accent",
+  "var(--warm)": "warm",
+  "var(--alert)": "alert",
+};
+
+function toneKeyOfToken(tone: string): EdgeToneKey {
+  return TOKEN_TONE[tone.trim()] ?? "ink4";
+}
 
 /** 关系类型的中文名。写在边上,让"这条线是什么意思"不需要去对照图例。 */
 const EDGE_LABEL: Record<string, string> = {
@@ -274,7 +293,13 @@ export function buildScene(
   seedIds: ReadonlySet<NodeId>,
   opts: SceneOptions = {},
 ): Scene {
-  const { selectedId = null, hoveredId = null, dimmedKinds, minYear = null } = opts;
+  const {
+    selectedId = null,
+    hoveredId = null,
+    dimmedKinds,
+    minYear = null,
+    presets,
+  } = opts;
 
   const paperNodes = graph.nodes.filter((n) => n.kind === "paper");
   const maxCitations = paperNodes.reduce((m, p) => Math.max(m, p.citations), 10);
@@ -303,7 +328,7 @@ export function buildScene(
       x: pos.x,
       y: pos.y,
       r: paperRadius(node.citations, maxCitations),
-      label: node.title,
+      label: formatPaperTitle(node.title),
       tone: 0,
       year: node.year,
       citations: node.citations,
@@ -476,6 +501,7 @@ export function buildScene(
 
     const key = `${Math.min(a, b)}|${Math.max(a, b)}`;
     const layer: "structural" | "semantic" = e.layer === "semantic" ? "semantic" : "structural";
+    const preset = presetOfEdgeKind(e.kind, presets);
     const candidate: SceneEdge = {
       id: e.id,
       kind: e.kind,
@@ -487,12 +513,12 @@ export function buildScene(
       directed: e.directed,
       weight: e.weight,
       confidence: e.confidence,
-      tone: EDGE_TONE[e.kind] ?? "ink4",
+      tone: EDGE_TONE[e.kind] ?? (preset ? toneKeyOfToken(preset.visual.tone) : "ink4"),
       dash: SOLID,
       active: activeIds.size > 0 && (activeIds.has(e.source) || activeIds.has(e.target)),
       faded: Boolean(dimmedKinds?.has(e.kind)) || timeHidden,
-      label: layer === "semantic" ? (EDGE_LABEL[e.kind] ?? e.kind) : "",
-      kinds: [EDGE_LABEL[e.kind] ?? e.kind],
+      label: layer === "semantic" ? (preset?.label ?? EDGE_LABEL[e.kind] ?? e.kind) : "",
+      kinds: [preset?.label ?? EDGE_LABEL[e.kind] ?? e.kind],
       hasCitation: e.kind === "CITES",
       citationFrom: e.kind === "CITES" ? a : null,
       citationTo: e.kind === "CITES" ? b : null,

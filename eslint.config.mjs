@@ -29,7 +29,8 @@ const config = [
   // 1. 浏览器代码不得引入服务端模块(密钥/文件系统/上游数据源)
   {
     files: CLIENT_FILES,
-    ignores: ["src/app/api/**"],
+    // api/ 是服务端;login/page 是 Server Component(要在渲染前读会话并跳转)
+    ignores: ["src/app/api/**", "src/app/login/page.tsx"],
     rules: {
       "no-restricted-imports": [
         "error",

@@ -1,7 +1,9 @@
 import { NextResponse } from "next/server";
+import { requireUser } from "@/server/auth/require";
 import { z } from "zod";
 
 import { getModelSettings, saveModelSettings } from "@/server/model-settings";
+import { MODEL_PROVIDER_IDS } from "@/types/model-settings";
 
 export const dynamic = "force-dynamic";
 
@@ -10,7 +12,7 @@ const schema = z.object({
     .array(
       z.object({
         id: z.string().min(1).max(80),
-        provider: z.enum(["openai", "anthropic", "deepseek", "qwen", "custom"]),
+        provider: z.enum(MODEL_PROVIDER_IDS),
         name: z.string().trim().min(1).max(80),
         baseUrl: z
           .string()
@@ -38,20 +40,28 @@ const schema = z.object({
     ask: z.string().nullable(),
     translate: z.string().nullable(),
   }),
+  embedding: z.object({
+    accountId: z.string().nullable(),
+    model: z.string().trim().max(160),
+  }),
 });
 
-export async function GET() {
-  return NextResponse.json(await getModelSettings());
+export async function GET(req: Request) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+  return NextResponse.json(await getModelSettings(auth.user.id));
 }
 
 export async function PUT(req: Request) {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
   const parsed = schema.safeParse(await req.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "模型设置格式不正确" }, { status: 400 });
   }
 
   try {
-    return NextResponse.json(await saveModelSettings(parsed.data));
+    return NextResponse.json(await saveModelSettings(auth.user.id, parsed.data));
   } catch (e) {
     return NextResponse.json(
       {

@@ -259,13 +259,21 @@ export type StructuralEdgeKind =
  * 这里刻意保留为字面量联合而不是 string:内置关系是编译期可知的,
  * 用户自定义关系走 RelationPreset.id,由运行时校验兜住。
  */
-export type SemanticEdgeKind =
+export type BuiltinSemanticEdgeKind =
   | "BASELINE_OF"
   | "CONTEMPORARY_OF"
   | "SIMILAR_APPROACH"
   | "ALTERNATIVE_TO"
   | "EXTENDS"
   | "CONTRADICTS";
+
+/**
+ * 语义边类型。
+ *
+ * 内置关系保留字面量以便阅读与穷举;自定义关系使用 `CUSTOM_<PRESET_ID>`,
+ * 由 `edgeKindOf` 在运行时生成。`string & {}` 保留字面量补全,同时允许自定义值。
+ */
+export type SemanticEdgeKind = BuiltinSemanticEdgeKind | (string & {});
 
 /** 派生层关系:算法算出,给定同样输入必然复现。 */
 export type DerivedEdgeKind =
@@ -310,15 +318,22 @@ export interface RelationHardConstraints {
   requireCitation?: boolean;
   /** 两篇论文之间必须没有互相引用(用于识别"平行但未交汇"的工作)。 */
   requireMutualNonCitation?: boolean;
-  /** 年份差上限。 */
-  maxYearGap?: number;
+  /** 年份差上限。null 表示不限。 */
+  maxYearGap?: number | null;
   /** 必须共享至少一个 task 概念。 */
   requireSharedTask?: boolean;
   /** 必须共享至少一个 method 概念。 */
   requireSharedMethod?: boolean;
-  /** 向量相似度下限。 */
-  minSimilarity?: number;
+  /** 文本相似度下限。null 表示不限。 */
+  minSimilarity?: number | null;
 }
+
+/**
+ * 关系族。只用于信息架构,不参与判定 ——
+ * 但它决定了设置页如何把六条规则组织成用户能理解的三组:
+ * 谱系(谁站在谁肩上)、对照(平行工作差异)、冲突(结论是否拆台)。
+ */
+export type RelationFamily = "lineage" | "comparison" | "conflict" | "custom";
 
 /**
  * 关系预设 —— 把提示词工程从代码里搬出来,变成用户可维护、可演示的一等公民。
@@ -330,6 +345,8 @@ export interface RelationPreset {
   id: string;
   label: string;
   labelEn: string;
+  /** 关系族。旧版本地覆盖没有这个字段时按 custom 处理。 */
+  family?: RelationFamily;
   /** 一句话定义,展示在设置页与星图图例上。 */
   description: string;
   /** 判定标准,注入提示词。 */

@@ -19,6 +19,7 @@ import {
   generatePairs,
   heuristicScore,
   judgeSystem,
+  orientPair,
   pairPrompt,
   passesHardConstraints,
 } from "@/server/relations/pipeline";
@@ -70,11 +71,9 @@ for (const { f, s } of ranked) {
   let a = papers[f.i];
   let b = papers[f.j];
   if (!a || !b) continue;
-  if (preset.directed && f.citesIJ) {
-    const t = a;
-    a = b;
-    b = t;
-  }
+  const oriented = orientPair(f, a, b);
+  a = oriented.a;
+  b = oriented.b;
 
   console.log("=".repeat(72));
   console.log(`启发式分 ${s.toFixed(3)} · 引用关系 ${f.citesIJ ? "i→j" : f.citesJI ? "j→i" : "无"} · 年份差 ${f.yearGap}`);

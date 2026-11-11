@@ -77,6 +77,99 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     ],
   },
   {
+    id: "kimi",
+    label: "Kimi / 月之暗面",
+    note: "Kimi API 开放平台当前模型目录",
+    baseUrl: "https://api.moonshot.cn/v1",
+    models: [
+      { model: "kimi-k3", name: "Kimi K3", modalities: ["text", "vision"] },
+      { model: "kimi-k2.6", name: "Kimi K2.6", modalities: ["text", "vision"] },
+      { model: "kimi-k2.7-code", name: "Kimi K2.7 Code", modalities: ["text", "vision"] },
+    ],
+  },
+  {
+    id: "minimax",
+    label: "MiniMax",
+    note: "MiniMax 开放平台当前模型目录",
+    baseUrl: "https://api.minimaxi.com/v1",
+    models: [
+      { model: "MiniMax-M3", name: "MiniMax M3", modalities: ["text", "vision"] },
+      { model: "MiniMax-M2.7", name: "MiniMax M2.7", modalities: ["text"] },
+    ],
+  },
+  {
+    id: "hunyuan",
+    label: "腾讯混元",
+    note: "腾讯云 TokenHub 当前模型目录",
+    baseUrl: "https://tokenhub.tencentmaas.com/v1",
+    models: [
+      { model: "hy3", name: "混元 Hy3", modalities: ["text"] },
+      { model: "hy4-preview", name: "混元 Hy4 Preview", modalities: ["text"] },
+    ],
+  },
+  {
+    id: "mimo",
+    label: "小米 MiMo",
+    note: "MiMo 开源权重,经 OpenRouter 兼容网关调用",
+    baseUrl: "https://openrouter.ai/api/v1",
+    models: [
+      {
+        model: "xiaomi/mimo-v2.6-pro",
+        name: "MiMo V2.6 Pro",
+        modalities: ["text", "vision"],
+      },
+      {
+        model: "xiaomi/mimo-v2.6-flash",
+        name: "MiMo V2.6 Flash",
+        modalities: ["text", "vision"],
+      },
+      { model: "xiaomi/mimo-v2.5-pro", name: "MiMo V2.5 Pro", modalities: ["text"] },
+    ],
+  },
+  {
+    id: "nvidia",
+    label: "NVIDIA NIM",
+    note: "NVIDIA NIM 推理服务模型目录",
+    baseUrl: "https://integrate.api.nvidia.com/v1",
+    models: [
+      {
+        model: "nvidia/nemotron-3-ultra-550b-a55b",
+        name: "Nemotron 3 Ultra 550B",
+        modalities: ["text"],
+      },
+      {
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        name: "Nemotron 3 Super 120B",
+        modalities: ["text"],
+      },
+      {
+        model: "moonshotai/kimi-k2.6",
+        name: "Kimi K2.6 (NIM)",
+        modalities: ["text", "vision"],
+      },
+    ],
+  },
+  {
+    id: "amux",
+    label: "Amux AI",
+    note: "Amux 统一网关,一个 Key 调用多家模型",
+    baseUrl: "https://gateway.amux.ai/v1",
+    models: [
+      { model: "openai/gpt-6.1-sol", name: "GPT-6.1 Sol", modalities: ["text", "vision"] },
+      {
+        model: "anthropic/claude-opus-5-5",
+        name: "Claude Opus 5.5",
+        modalities: ["text", "vision"],
+      },
+      { model: "moonshotai/kimi-k3", name: "Kimi K3", modalities: ["text", "vision"] },
+      {
+        model: "deepseek/deepseek-v4.1-flash",
+        name: "DeepSeek V4.1 Flash",
+        modalities: ["text", "vision"],
+      },
+    ],
+  },
+  {
     id: "custom",
     label: "其他兼容接口",
     note: "手动填写 OpenAI 兼容地址与模型 ID",
@@ -125,6 +218,10 @@ export function inferModelModalities(
   const multimodal =
     /(vl|vision|omni|multimodal|image|gpt-4o|gpt-4\.1|gpt-5|gpt-6|^o[34])/.test(name) ||
     (provider === "anthropic" && name.startsWith("claude-")) ||
-    (provider === "deepseek" && /flash/.test(name));
+    (provider === "deepseek" && /flash/.test(name)) ||
+    (provider === "kimi" && /kimi-k(3|2\.[67])/.test(name)) ||
+    (provider === "minimax" && /-m3/.test(name)) ||
+    (provider === "mimo" && /mimo-v2\.6/.test(name)) ||
+    (provider === "amux" && /(claude|kimi-k|deepseek-v4\.1|minimax-m3)/.test(name));
   return multimodal ? ["text", "vision"] : ["text"];
 }

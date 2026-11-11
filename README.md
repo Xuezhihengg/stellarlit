@@ -57,19 +57,43 @@ L1 结构层   引用 / 作者 / 发表 / 提及   上游数据源,权威可查
 | 样式 | Tailwind CSS v4(CSS-first `@theme`) | 设计令牌即 CSS 变量,换主题 = 换一套变量 |
 | 状态 | Zustand | 只有跨组件共享的状态才进 store |
 | 渲染 | Canvas 2D(自写渲染管线) | 上千节点下比 SVG/DOM 稳;绘制是纯函数,可脱离 React 测试 |
-| AI | OpenAI 兼容接口(可换供应商)+ 流式输出 | 不绑定单一厂商 |
+| AI | OpenAI 兼容接口(可换供应商)+ 流式输出 | 不绑定单一厂商;模型配置按账号隔离 |
+| 数据库 | PostgreSQL 16+ (`pg` 连接池 + JSONB) | 多账号并发写、事务与行级隔离 |
+| 缓存 | Redis(`ioredis`,TTL + 跨实例共享) | 星空 / 邻域 / 关系 / 图像分析缓存与上游节流 |
 | 数据 | OpenAlex / arXiv / Semantic Scholar | 全部免费且有官方 API |
 
 ## 四、快速开始
 
-```bash
-pnpm install
-cp .env.example .env.local     # 可选:环境变量回退配置
-pnpm dev                       # http://localhost:3000
+需要 Node.js 24+、PostgreSQL 16+ 与 Redis 7+。先建库并确认 Redis 可用:
 
-pnpm check                     # 类型 + 代码规范 + 设计令牌一致性
+```bash
+createdb stellarlit          # 或 createdb stellarlit_test(跑自检用)
+redis-cli ping                # 应返回 PONG;连接串不是本机时改 REDIS_URL
+pnpm install
+cp .env.example .env.local    # 可选:填写 DATABASE_URL / 环境变量回退配置
+pnpm key:generate             # 生成主密钥,把输出写进 .env.local 的 ENCRYPTION_KEY
+pnpm dev                      # http://localhost:3000,首次打开先注册账号
+
+pnpm check                     # 类型 + 规范 + RAG / Agent / 安全 / 持久化自检
+pnpm cleanup                   # 手动跑一次缓存/会话清理(定时任务也可调接口)
 pnpm build && pnpm start
 ```
+
+服务端会在数据库首次就绪后自动跑一次清理,之后按 `MAINTENANCE_INTERVAL_MIN`
+(默认 6 小时)重复:清过期会话、淘汰图像分析缓存、按容量/时间清理 `data/cache/`。
+问答历史里的图片预览不在数据库里,而是内容寻址地存在 `data/media/`;清理任务会
+顺带删除超过 24 小时、已没有任何历史引用的孤儿对象。
+生产环境可用 `POST /api/maintenance/cleanup` + `MAINTENANCE_TOKEN` 接入 Cron;
+Redis 不可用时会自动降级为直接读源,不会把站点打挂。
+
+首次启动会自动建表,并把仓库自带的 `data/starfields/*.json` 与
+`data/model-settings.json` 导入为 `legacy`。注册的第一个账号会自动接管这些星空、
+问答历史、自定义预设与整套模型配置;之后再注册的账号从空开始。模型服务
+(API Key、模型清单、服务绑定、向量模型)按账号隔离,切换账号就是切换整套配置。
+设置页保存的 API Key 使用 AES-256-GCM 加密后落库,主密钥来自 `ENCRYPTION_KEY`;
+已有的明文密钥可用 `pnpm secrets:migrate` 一次性加密。每个账号有独立的每日 token
+预算,顶栏下拉与 `/account` 页面会显示已用与剩余;关系预设只保存在服务端,
+切换账号不会串。
 
 ## 五、目录结构
 
@@ -132,5 +156,5 @@ pnpm probe baseline 3      # 打印某一类关系的候选、完整提示词与
 ## 八、赛事合规
 
 - 仓库保留完整的开发提交历史
-- 不提交任何 API Key,密钥只走环境变量(仓库内仅提供 `.env.example`)
+- 不提交任何 API Key;模型密钥按账号加密落库,主密钥只走环境变量(仓库内仅提供 `.env.example`)
 - 全部代码可解释、可现场演示

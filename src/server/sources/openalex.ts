@@ -9,6 +9,7 @@
 
 import { serverConfig } from "../config";
 import { fetchJson } from "../http";
+import { formatPaperText } from "@/lib/format";
 
 const OA = "https://api.openalex.org";
 
@@ -125,8 +126,8 @@ function toWork(r: RawWork): OaWork {
 
   return {
     id: short(r.id ?? ""),
-    title: r.display_name ?? "",
-    abstract: rebuildAbstract(r.abstract_inverted_index),
+    title: formatPaperText(r.display_name ?? ""),
+    abstract: formatPaperText(rebuildAbstract(r.abstract_inverted_index) ?? "") || undefined,
     year: r.publication_year ?? 0,
     citedByCount: r.cited_by_count ?? 0,
     referencedWorks: (r.referenced_works ?? []).map(short),

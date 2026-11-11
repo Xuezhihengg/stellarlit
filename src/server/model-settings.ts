@@ -1,8 +1,11 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { z } from "zod";
+/**
+ * 模型配置解析 —— 全部按账号隔离。
+ *
+ * 账户、模型清单、服务绑定、向量绑定都落在 owner_id 下:切换账号就是切换
+ * 整套 API Key 与模型选择,不再有「全站共用一份部署配置」的漏洞。
+ * 环境变量只在当前账号没有绑定任何模型时兜底,方便纯部署 / 演示场景。
+ */
 
-import { serverConfig } from "./config";
 import type {
   ModelModality,
   ModelProviderId,
@@ -12,26 +15,14 @@ import type {
   SaveModelSettingsRequest,
 } from "@/types/model-settings";
 
-interface StoredAccount {
-  id: string;
-  provider: ModelProviderId;
-  name: string;
-  baseUrl: string;
-  apiKey: string;
-}
-
-interface StoredSettings {
-  version: 1;
-  accounts: StoredAccount[];
-  models: Array<{
-    id: string;
-    accountId: string;
-    name: string;
-    model: string;
-    modalities: ModelModality[];
-  }>;
-  services: Record<ModelServiceId, string | null>;
-}
+import { serverConfig } from "./config";
+import {
+  ensureLegacyModelSettings,
+  readStoredSettings,
+  writeStoredSettings,
+  type StoredAccount,
+  type StoredSettings,
+} from "./db/model-settings";
 
 export interface ResolvedModelTarget {
   accountId: string;
@@ -43,48 +34,25 @@ export interface ResolvedModelTarget {
   modalities: ModelModality[];
 }
 
-const SETTINGS_PATH = path.join(serverConfig.dataDir, "model-settings.json");
-let cachedSettings: StoredSettings | null | undefined;
+export interface ResolvedEmbeddingTarget {
+  accountId: string;
+  provider: ModelProviderId;
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
 
-const providerSchema = z.enum(["openai", "anthropic", "deepseek", "qwen", "custom"]);
-const modalitySchema = z.enum(["text", "vision"]);
+/** 每进程只尝试导入一次旧的 JSON 配置;失败也不影响新账号。 */
+let legacyImport: Promise<void> | undefined;
 
-const storedSchema = z.object({
-  version: z.literal(1),
-  accounts: z.array(
-    z.object({
-      id: z.string(),
-      provider: providerSchema,
-      name: z.string(),
-      baseUrl: z.string(),
-      apiKey: z.string(),
-    }),
-  ),
-  models: z.array(
-    z.object({
-      id: z.string(),
-      accountId: z.string(),
-      name: z.string(),
-      model: z.string(),
-      modalities: z.array(modalitySchema),
-    }),
-  ),
-  services: z.object({
-    relation: z.string().nullable(),
-    ask: z.string().nullable(),
-    translate: z.string().nullable(),
-  }),
-});
-
-async function readStored(): Promise<StoredSettings | null> {
-  if (cachedSettings !== undefined) return cachedSettings;
+async function readStored(ownerId: string): Promise<StoredSettings | null> {
   try {
-    const raw = await readFile(SETTINGS_PATH, "utf8");
-    const parsed = storedSchema.safeParse(JSON.parse(raw));
-    cachedSettings = parsed.success ? parsed.data : null;
-    return cachedSettings;
+    if (ownerId === "legacy") {
+      legacyImport ??= ensureLegacyModelSettings().catch(() => undefined);
+      await legacyImport;
+    }
+    return await readStoredSettings(ownerId);
   } catch {
-    cachedSettings = null;
     return null;
   }
 }
@@ -104,17 +72,19 @@ function toPublic(settings: StoredSettings | null): ModelSettingsDto {
     ),
     models: settings?.models ?? [],
     services: settings?.services ?? { relation: null, ask: null, translate: null },
+    embedding: settings?.embedding ?? { accountId: null, model: "" },
   };
 }
 
-export async function getModelSettings(): Promise<ModelSettingsDto> {
-  return toPublic(await readStored());
+export async function getModelSettings(ownerId: string): Promise<ModelSettingsDto> {
+  return toPublic(await readStored(ownerId));
 }
 
 export async function saveModelSettings(
+  ownerId: string,
   input: SaveModelSettingsRequest,
 ): Promise<ModelSettingsDto> {
-  const previous = await readStored();
+  const previous = await readStored(ownerId);
   const previousAccounts = new Map(
     (previous?.accounts ?? []).map((account) => [account.id, account]),
   );
@@ -147,14 +117,16 @@ export async function saveModelSettings(
       ask: validBinding(input.services.ask),
       translate: validBinding(input.services.translate),
     },
+    embedding: {
+      accountId:
+        input.embedding.accountId && accountIds.has(input.embedding.accountId)
+          ? input.embedding.accountId
+          : null,
+      model: input.embedding.model.trim(),
+    },
   };
 
-  await mkdir(serverConfig.dataDir, { recursive: true });
-  const temp = `${SETTINGS_PATH}.tmp`;
-  await writeFile(temp, JSON.stringify(settings, null, 2), { mode: 0o600 });
-  await rename(temp, SETTINGS_PATH);
-  await chmod(SETTINGS_PATH, 0o600);
-  cachedSettings = settings;
+  await writeStoredSettings(ownerId, settings);
   return toPublic(settings);
 }
 
@@ -174,8 +146,11 @@ function envTarget(): ResolvedModelTarget | null {
   };
 }
 
-export async function resolveModelById(id: string): Promise<ResolvedModelTarget | null> {
-  const settings = await readStored();
+export async function resolveModelById(
+  ownerId: string,
+  id: string,
+): Promise<ResolvedModelTarget | null> {
+  const settings = await readStored(ownerId);
   if (!settings) return null;
   const model = settings.models.find((item) => item.id === id);
   if (!model) return null;
@@ -192,8 +167,8 @@ export async function resolveModelById(id: string): Promise<ResolvedModelTarget 
   };
 }
 
-export async function resolveAccountCredentials(accountId: string) {
-  const settings = await readStored();
+export async function resolveAccountCredentials(ownerId: string, accountId: string) {
+  const settings = await readStored(ownerId);
   const account = settings?.accounts.find((item) => item.id === accountId);
   if (!account?.apiKey) return null;
   return {
@@ -203,23 +178,58 @@ export async function resolveAccountCredentials(accountId: string) {
   };
 }
 
+/**
+ * 向量模型解析顺序:当前账号设置页绑定 → 环境变量回退。
+ *
+ * 设置页是主入口:同一个服务商账户既可用于聊天,也可单独绑定向量模型。
+ * 环境变量留给纯部署场景,不再要求普通用户改文件。
+ */
+export async function resolveEmbeddingTarget(ownerId: string): Promise<ResolvedEmbeddingTarget | null> {
+  const settings = await readStored(ownerId);
+  const binding = settings?.embedding;
+  if (settings && binding?.accountId && binding.model.trim()) {
+    const account = settings.accounts.find((item) => item.id === binding.accountId);
+    if (account?.apiKey) {
+      return {
+        accountId: account.id,
+        provider: account.provider,
+        baseUrl: account.baseUrl,
+        apiKey: account.apiKey,
+        model: binding.model.trim(),
+      };
+    }
+  }
+
+  if (serverConfig.embedding.enabled && serverConfig.embedding.apiKey && serverConfig.embedding.baseUrl && serverConfig.embedding.model) {
+    return {
+      accountId: "env-embedding",
+      provider: /anthropic/i.test(serverConfig.embedding.baseUrl) ? "anthropic" : "custom",
+      baseUrl: serverConfig.embedding.baseUrl,
+      apiKey: serverConfig.embedding.apiKey,
+      model: serverConfig.embedding.model,
+    };
+  }
+  return null;
+}
+
 export async function resolveServiceModel(
+  ownerId: string,
   service: ModelServiceId,
 ): Promise<ResolvedModelTarget | null> {
-  const settings = await readStored();
+  const settings = await readStored(ownerId);
   const id = settings?.services[service];
   if (id) {
-    const resolved = await resolveModelById(id);
+    const resolved = await resolveModelById(ownerId, id);
     if (resolved) return resolved;
   }
   return envTarget();
 }
 
-export async function configuredModelSummary() {
+export async function configuredModelSummary(ownerId: string) {
   const [relation, ask, translate] = await Promise.all([
-    resolveServiceModel("relation"),
-    resolveServiceModel("ask"),
-    resolveServiceModel("translate"),
+    resolveServiceModel(ownerId, "relation"),
+    resolveServiceModel(ownerId, "ask"),
+    resolveServiceModel(ownerId, "translate"),
   ]);
   return {
     relation,
@@ -230,13 +240,15 @@ export async function configuredModelSummary() {
 }
 
 /** 面向界面的能力清单。界面据此区分 AI 结果与启发式降级。 */
-export async function capabilityReport() {
-  const summary = await configuredModelSummary();
+export async function capabilityReport(ownerId: string) {
+  const summary = await configuredModelSummary(ownerId);
+  const embedding = await resolveEmbeddingTarget(ownerId);
   return {
     llm: Boolean(summary.relation || summary.ask),
-    embedding: serverConfig.embedding.enabled,
+    embedding: Boolean(embedding),
     llmModel: summary.relation?.model ?? summary.ask?.model ?? null,
     askModel: summary.ask?.model ?? null,
     vision: summary.vision,
+    embeddingModel: embedding?.model ?? null,
   };
 }

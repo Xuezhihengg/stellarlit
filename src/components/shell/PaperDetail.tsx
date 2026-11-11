@@ -4,7 +4,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Collapsible } from "@/components/ui/Collapsible";
 import { translateText } from "@/lib/api/client";
+import { formatPaperText, formatPaperTitle } from "@/lib/format";
 import { edgeKindLabel } from "@/lib/graph/edge-labels";
+import { presetOfEdgeKind } from "@/lib/graph/edge-kinds";
 import type { StarfieldPayload } from "@/types/api";
 import type { Evidence, GraphEdge, PaperNode } from "@/types/kg";
 
@@ -101,6 +103,7 @@ export function PaperDetail({
   /** 翻译是异步的:换论文后旧请求回来,不能把译文贴到新论文上 */
   const paperIdRef = useRef(paper.id);
   paperIdRef.current = paper.id;
+  const abstractText = useMemo(() => formatPaperText(paper.abstract ?? ""), [paper.abstract]);
 
   const updateSidebar = (
     patch: Partial<PaperSidebarState>,
@@ -123,7 +126,7 @@ export function PaperDetail({
   };
 
   const translate = async () => {
-    if (!paper.abstract || translating) return;
+    if (!abstractText || translating) return;
     if (sidebar.translation) {
       switchSummary(sidebar.summaryView === "original" ? "translation" : "original");
       return;
@@ -132,7 +135,7 @@ export function PaperDetail({
     setTranslateError(null);
     const requestedFor = paper.id;
     try {
-      const res = await translateText(paper.abstract);
+      const res = await translateText(abstractText);
       updateSidebar(
         { translation: res.text, summaryView: "translation" },
         requestedFor,
@@ -179,13 +182,12 @@ export function PaperDetail({
   }, [relations]);
 
   const presetLabel = (kind: string): string =>
-    payload.presets.find((p) => p.id.toLowerCase() === kind.toLowerCase())?.label ??
-    edgeKindLabel(kind);
+    presetOfEdgeKind(kind, payload.presets)?.label ?? edgeKindLabel(kind);
 
   const summaryText =
     sidebar.summaryView === "translation" && sidebar.translation
       ? sidebar.translation
-      : (paper.abstract ?? "");
+      : abstractText;
   const summaryTokens = useMemo(() => summarySegments(summaryText), [summaryText]);
   const translateLabel = translating
     ? "翻译中…"
@@ -197,7 +199,7 @@ export function PaperDetail({
   return (
     <div className="paper-detail-enter flex flex-col gap-3.5">
       <header className="paper-detail-part">
-        <h2 className="text-[14px] leading-snug text-ink">{paper.title}</h2>
+        <h2 className="text-[14px] leading-snug text-ink">{formatPaperTitle(paper.title)}</h2>
 
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-ink-4">
           <span>{paper.year || "年份未知"}</span>
@@ -212,7 +214,7 @@ export function PaperDetail({
         ) : null}
       </header>
 
-      {paper.abstract ? (
+      {abstractText ? (
         <section className="paper-detail-part">
           <div className="flex items-baseline justify-between gap-2">
             <SectionTitle>摘要</SectionTitle>
@@ -333,6 +335,9 @@ export function PaperDetail({
           <div className="mt-1.5 flex flex-col gap-1">
             {groups.map(({ kind, items }, groupIndex) => {
               const isOpen = sidebar.openGroup === kind;
+              const kindPreset = presetOfEdgeKind(kind, payload.presets);
+              const tone = kindPreset?.visual.tone ?? toneOfKind(kind);
+              const dashed = Boolean(kindPreset?.visual.dash && kindPreset.visual.dash !== "none");
               return (
                 <div
                   key={kind}
@@ -356,8 +361,8 @@ export function PaperDetail({
                     <span
                       className="h-3 w-3 shrink-0 rounded-full border"
                       style={{
-                        borderColor: toneOfKind(kind),
-                        borderStyle: kind === "CONTEMPORARY_OF" ? "dashed" : "solid",
+                        borderColor: tone,
+                        borderStyle: dashed ? "dashed" : "solid",
                       }}
                     />
                     <span className="text-[10.5px] tracking-[0.06em] text-ink-3">
@@ -407,7 +412,7 @@ export function PaperDetail({
                               }`}
                             >
                               <span className="line-clamp-2 text-[11.5px] leading-snug text-ink-2">
-                                {other?.kind === "paper" ? other.title : otherId}
+                                {other?.kind === "paper" ? formatPaperTitle(other.title) : otherId}
                               </span>
                             </button>
 
@@ -520,7 +525,7 @@ function EvidenceCard({ evidence }: { evidence: Evidence }) {
           原文 · {evidence.section}
         </div>
         <blockquote className="mt-1 text-[11.5px] leading-[1.7] text-ink-2">
-          “{evidence.quote}”
+          “{formatPaperText(evidence.quote)}”
         </blockquote>
       </li>
     );

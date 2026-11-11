@@ -9,6 +9,7 @@ import type { ZodType } from "zod";
 
 import type { ModelServiceId } from "@/types/model-settings";
 
+import { recordUsage } from "../db/usage";
 import { resolveModelById, resolveServiceModel, type ResolvedModelTarget } from "../model-settings";
 
 export interface ChatImage {
@@ -18,6 +19,8 @@ export interface ChatImage {
 }
 
 interface ModelCallOptions {
+  /** 当前登录账号;模型账户与绑定都按它隔离。 */
+  ownerId: string;
   service?: ModelServiceId;
   modelId?: string;
   target?: ResolvedModelTarget;
@@ -25,7 +28,12 @@ interface ModelCallOptions {
   user: string;
   temperature?: number;
   maxTokens?: number;
-  image?: ChatImage;
+  /** 可多张;顺序与界面上的缩略图一致 */
+  images?: ChatImage[];
+  /** 非流式调用的超时;规划这类"失败也要快速回退"的调用用它。 */
+  timeoutMs?: number;
+  /** 客户端断开时中止上游请求,避免继续烧 token。 */
+  signal?: AbortSignal;
 }
 
 export interface ChatOptions extends ModelCallOptions {
@@ -41,14 +49,89 @@ interface ChatResponse {
   content?: Array<{ type?: string; text?: string }>;
 }
 
+/** 供应商明确拒绝时的可读原因:直接给用户看,不再包一层「请求失败」。 */
+class ProviderError extends Error {}
+
+let usageWriteWarned = false;
+
+/** 与 safety/guard 的口径一致:中文约 2 字符 1 token,只用于预算估算。 */
+function estimateTokens(text: string): number {
+  return Math.ceil(text.length / 2);
+}
+
+function estimateInput(opts: { system: string; user: string; images?: ChatImage[] }): number {
+  // 图片无法按字符估;每张按 800 token 计,避免带图问答被严重低估
+  return estimateTokens(opts.system) + estimateTokens(opts.user) + (opts.images?.length ?? 0) * 800;
+}
+
+/** 把调用方 signal 与超时合成一个控制器;dispose 负责清掉计时器与监听。 */
+function requestController(timeoutMs: number, signal?: AbortSignal) {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
+/** 用量写入失败不能影响这次模型调用,但要在日志里留一次线索。 */
+async function meter(ownerId: string, tokens: number): Promise<void> {
+  try {
+    await recordUsage(ownerId, tokens);
+  } catch (error) {
+    if (usageWriteWarned) return;
+    usageWriteWarned = true;
+    console.error(
+      "[usage] token 用量写入失败:",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+const STATUS_HINT: Record<number, string> = {
+  401: "模型密钥无效",
+  402: "模型账户余额不足",
+  403: "当前密钥无权访问该模型",
+  404: "模型不存在或接口地址不对",
+  429: "模型限流,请稍后重试",
+};
+
+/**
+ * 把供应商的 HTTP 错误翻成一句人话。
+ *
+ * 只取错误消息本身,绝不回显请求头 —— 密钥不能出现在日志或界面里。
+ * 余额不足这类问题必须说出来,否则界面只能显示「模型不可用」,
+ * 用户会以为是自己网络或配置的问题。
+ */
+async function describeHttpError(res: Response): Promise<string> {
+  const hint = STATUS_HINT[res.status] ?? `模型接口返回 ${res.status}`;
+  const raw = await res.text().catch(() => "");
+  let detail = "";
+  try {
+    const parsed = JSON.parse(raw) as { error?: { message?: string } };
+    detail = parsed.error?.message ?? "";
+  } catch {
+    detail = raw.slice(0, 120);
+  }
+  const short = detail.replace(/\s+/g, " ").slice(0, 100).trim();
+  return short ? `${hint}(${short})` : hint;
+}
+
 async function targetOf(opts: {
+  ownerId: string;
   service?: ModelServiceId;
   modelId?: string;
   target?: ResolvedModelTarget;
 }): Promise<ResolvedModelTarget | null> {
   if (opts.target) return opts.target;
-  if (opts.modelId) return resolveModelById(opts.modelId);
-  return resolveServiceModel(opts.service ?? "relation");
+  if (opts.modelId) return resolveModelById(opts.ownerId, opts.modelId);
+  return resolveServiceModel(opts.ownerId, opts.service ?? "relation");
 }
 
 /** 从模型回复里抠出 JSON。模型常常会裹一层 ```json 围栏或者加一句开场白。 */
@@ -74,30 +157,34 @@ function tryParse(value: string): unknown {
   }
 }
 
-export async function llmAvailable(service: ModelServiceId = "relation"): Promise<boolean> {
-  return Boolean(await resolveServiceModel(service));
+export async function llmAvailable(
+  ownerId: string,
+  service: ModelServiceId = "relation",
+): Promise<boolean> {
+  return Boolean(await resolveServiceModel(ownerId, service));
 }
 
 function openAiContent(opts: ModelCallOptions): string | Array<Record<string, unknown>> {
-  if (!opts.image) return opts.user;
+  const images = opts.images ?? [];
+  if (!images.length) return opts.user;
   return [
     { type: "text", text: opts.user },
-    {
+    ...images.map((image) => ({
       type: "image_url",
-      image_url: { url: `data:${opts.image.mimeType};base64,${opts.image.data}` },
-    },
+      image_url: { url: `data:${image.mimeType};base64,${image.data}` },
+    })),
   ];
 }
 
 function anthropicContent(opts: ModelCallOptions): Array<Record<string, unknown>> {
   const content: Array<Record<string, unknown>> = [{ type: "text", text: opts.user }];
-  if (opts.image) {
+  for (const image of opts.images ?? []) {
     content.push({
       type: "image",
       source: {
         type: "base64",
-        media_type: opts.image.mimeType,
-        data: opts.image.data,
+        media_type: image.mimeType,
+        data: image.data,
       },
     });
   }
@@ -185,32 +272,51 @@ export async function chatJson<T>(
 ): Promise<{ value: T; raw: string } | null> {
   const target = await targetOf(opts);
   if (!target) return null;
+  // 结构化抽取也走同一条多模态入口:文本模型不能假装看过图。
+  if ((opts.images?.length ?? 0) > 0 && !target.modalities.includes("vision")) {
+    return null;
+  }
 
   const { retries = 1 } = opts;
+  const inputTokens = estimateInput(opts);
+  let spent = 0;
   for (let attempt = 0; attempt <= retries; attempt++) {
+    if (opts.signal?.aborted) break;
     let content = "";
+    spent += inputTokens;
     try {
       const request = requestFor(target, opts, false, true);
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), 60_000);
-      const res = await fetch(request.url, {
-        method: "POST",
-        headers: request.headers,
-        body: JSON.stringify(request.body),
-        signal: ac.signal,
-      });
-      clearTimeout(timer);
+      const ctrl = requestController(opts.timeoutMs ?? 60_000, opts.signal);
+      let res: Response;
+      try {
+        res = await fetch(request.url, {
+          method: "POST",
+          headers: request.headers,
+          body: JSON.stringify(request.body),
+          signal: ctrl.signal,
+        });
+      } finally {
+        ctrl.dispose();
+      }
       if (!res.ok) continue;
       content = nonStreamText(target, (await res.json()) as ChatResponse);
+      spent += estimateTokens(content);
     } catch {
-      if (attempt >= retries) return null;
+      if (attempt >= retries) {
+        await meter(opts.ownerId, spent);
+        return null;
+      }
       continue;
     }
 
     const parsed = extractJson(content);
     const checked = schema.safeParse(parsed);
-    if (checked.success) return { value: checked.data, raw: content };
+    if (checked.success) {
+      await meter(opts.ownerId, spent);
+      return { value: checked.data, raw: content };
+    }
   }
+  await meter(opts.ownerId, spent);
   return null;
 }
 
@@ -224,7 +330,7 @@ export async function streamChat(
 ): Promise<{ text: string; ok: boolean; error?: string }> {
   const target = await targetOf(opts);
   if (!target) return { text: "", ok: false, error: "未配置问答模型" };
-  if (opts.image && !target.modalities.includes("vision")) {
+  if ((opts.images?.length ?? 0) > 0 && !target.modalities.includes("vision")) {
     return {
       text: "",
       ok: false,
@@ -233,20 +339,20 @@ export async function streamChat(
   }
 
   const request = requestFor(target, opts, true, false);
-  const ac = new AbortController();
-  const onAbort = () => ac.abort();
-  opts.signal?.addEventListener("abort", onAbort);
-  const timer = setTimeout(() => ac.abort(), 90_000);
+  const ctrl = requestController(90_000, opts.signal);
 
+  const inputTokens = estimateInput(opts);
   let text = "";
+  let truncated = false;
   try {
     const res = await fetch(request.url, {
       method: "POST",
       headers: request.headers,
       body: JSON.stringify(request.body),
-      signal: ac.signal,
+      signal: ctrl.signal,
     });
-    if (!res.ok || !res.body) throw new Error("LLM HTTP error");
+    if (!res.ok) throw new ProviderError(await describeHttpError(res));
+    if (!res.body) throw new Error("响应没有正文");
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -266,10 +372,13 @@ export async function streamChat(
         const payload = line.slice(5).trim();
         if (!payload || payload === "[DONE]") continue;
         try {
-          const delta = deltaText(
-            target,
-            JSON.parse(payload) as Record<string, unknown>,
-          );
+          const event = JSON.parse(payload) as Record<string, unknown>;
+          const choice = (
+            event.choices as Array<{ finish_reason?: string | null }> | undefined
+          )?.[0];
+          if (choice?.finish_reason === "length") truncated = true;
+
+          const delta = deltaText(target, event);
           if (delta) {
             text += delta;
             onDelta(delta);
@@ -279,46 +388,60 @@ export async function streamChat(
         }
       }
     }
+    // 推理吃满预算时正文会是空的:这时候要说清是"被截断",而不是让上层
+    // 用一个笼统的"不可用"盖过去。
+    if (!text.trim() && truncated) {
+      return { text, ok: false, error: "推理占满了输出预算,正文被截断" };
+    }
     return { text, ok: true };
-  } catch {
+  } catch (error) {
     return {
       text,
       ok: false,
-      error: opts.signal?.aborted ? undefined : "模型请求失败",
+      error: opts.signal?.aborted
+        ? undefined
+        : error instanceof ProviderError
+          ? error.message
+          : `模型请求失败(${error instanceof Error ? error.message : "未知错误"})`,
     };
   } finally {
-    clearTimeout(timer);
-    opts.signal?.removeEventListener("abort", onAbort);
+    ctrl.dispose();
+    await meter(opts.ownerId, inputTokens + estimateTokens(text));
   }
 }
 
 /** 非流式文本生成 —— 翻译这类一次性返回的任务用。 */
 export async function chatText(opts: {
+  ownerId: string;
   system: string;
   user: string;
   temperature?: number;
   maxTokens?: number;
   service?: ModelServiceId;
   modelId?: string;
+  signal?: AbortSignal;
 }): Promise<string | null> {
   const target = await targetOf(opts);
   if (!target) return null;
 
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 60_000);
+  const inputTokens = estimateInput(opts);
+  let output = "";
+  const ctrl = requestController(60_000, opts.signal);
   try {
     const request = requestFor(target, opts, false, false);
     const res = await fetch(request.url, {
       method: "POST",
       headers: request.headers,
       body: JSON.stringify(request.body),
-      signal: ac.signal,
+      signal: ctrl.signal,
     });
     if (!res.ok) return null;
-    return nonStreamText(target, (await res.json()) as ChatResponse).trim() || null;
+    output = nonStreamText(target, (await res.json()) as ChatResponse).trim();
+    return output || null;
   } catch {
     return null;
   } finally {
-    clearTimeout(timer);
+    ctrl.dispose();
+    await meter(opts.ownerId, inputTokens + estimateTokens(output));
   }
 }

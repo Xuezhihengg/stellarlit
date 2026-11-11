@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type TransitionEvent,
+} from "react";
 
 export interface SelectMenuOption {
   value: string;
@@ -29,9 +37,52 @@ export function SelectMenu({
   className = "",
 }: SelectMenuProps) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [visible, setVisible] = useState(false);
+  /** 下方放不下就翻到触发按钮上方展开 —— 不压到窗口底部之外。 */
+  const [placement, setPlacement] = useState<"top" | "bottom">("bottom");
+  const [maxHeight, setMaxHeight] = useState<number>();
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const listId = useId();
   const selected = options.find((option) => option.value === value);
+
+  // 挂载后、首次绘制前量一次:此时菜单还不可见,翻到上方不会有跳动。
+  useLayoutEffect(() => {
+    if (!mounted) return;
+    const list = listRef.current;
+    const trigger = rootRef.current?.querySelector("button");
+    if (!list || !trigger) return;
+
+    const gap = 8;
+    const rect = trigger.getBoundingClientRect();
+    const below = window.innerHeight - rect.bottom - gap;
+    const above = rect.top - gap;
+    const natural = list.scrollHeight;
+    const next = natural > below && above > below ? "top" : "bottom";
+    const space = next === "top" ? above : below;
+
+    setPlacement(next);
+    setMaxHeight(Math.min(256, Math.max(space, 120)));
+  }, [mounted, options.length]);
+
+  // 与弹窗同一套做法:先挂载、下一帧再翻转状态,过渡才有起点。
+  useEffect(() => {
+    if (open) {
+      setMounted(true);
+      const frame = requestAnimationFrame(() => setVisible(true));
+      return () => cancelAnimationFrame(frame);
+    }
+    setVisible(false);
+    return undefined;
+  }, [open]);
+
+  // 关闭后留 220ms 让淡出跑完;亮起的瞬间又点开也能直接接管回来。
+  useEffect(() => {
+    if (open || !mounted) return;
+    const timer = setTimeout(() => setMounted(false), 220);
+    return () => clearTimeout(timer);
+  }, [open, mounted]);
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +99,13 @@ export function SelectMenu({
       document.removeEventListener("keydown", escape);
     };
   }, [open]);
+
+  const finishClose = (event: TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || event.propertyName !== "opacity") {
+      return;
+    }
+    if (!open && !visible) setMounted(false);
+  };
 
   return (
     <div ref={rootRef} className={`relative ${className}`}>
@@ -83,12 +141,28 @@ export function SelectMenu({
         </svg>
       </button>
 
-      {open ? (
+      {mounted ? (
         <div
+          ref={listRef}
           id={listId}
           role="listbox"
           aria-label={ariaLabel}
-          className="absolute z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-hair-2 bg-bg/95 p-1 shadow-[0_18px_45px_-22px_rgba(0,0,0,0.9)] backdrop-blur-xl"
+          aria-hidden={!open}
+          className={`absolute z-30 w-full overflow-y-auto rounded-lg border border-hair-2 bg-bg/95 p-1 shadow-[0_18px_45px_-22px_rgba(0,0,0,0.9)] backdrop-blur-xl ${
+            placement === "top" ? "bottom-full mb-1" : "top-full mt-1"
+          } ${visible ? "" : "pointer-events-none"}`}
+          style={{
+            maxHeight,
+            opacity: visible ? 1 : 0,
+            transform: visible
+              ? "translateY(0) scale(1)"
+              : `translateY(${placement === "top" ? 4 : -4}px) scale(0.98)`,
+            transformOrigin: placement === "top" ? "bottom" : "top",
+            transitionProperty: "opacity, transform",
+            transitionDuration: "var(--dur-quick)",
+            transitionTimingFunction: "var(--ease-in-out)",
+          }}
+          onTransitionEnd={finishClose}
         >
           {options.map((option, index) => {
             const active = option.value === value;

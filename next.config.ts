@@ -12,6 +12,8 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // 开发工具标记固定在左下角,会挡住时间轴。它对开发没帮助到值得牺牲一片视野。
   devIndicators: false,
+  // ioredis 依赖 net/tls/dns 等 Node 内置模块,不能进 Webpack bundle
+  serverExternalPackages: ["ioredis", "pg"],
   experimental: {
     optimizePackageImports: ["zustand"],
   },

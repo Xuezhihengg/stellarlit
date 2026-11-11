@@ -19,6 +19,7 @@
 
 import { serverConfig } from "../config";
 import { fetchJson } from "../http";
+import { formatPaperText } from "@/lib/format";
 import type { OaWork } from "./openalex";
 
 const S2 = "https://api.semanticscholar.org/graph/v1";
@@ -78,8 +79,8 @@ function toWork(p: S2Paper, citedWorks: string[] = []): OaWork {
 
   return {
     id: resolveId(p),
-    title: p.title ?? "",
-    abstract: p.abstract ?? undefined,
+    title: formatPaperText(p.title ?? ""),
+    abstract: p.abstract ? formatPaperText(p.abstract) : undefined,
     year: p.year ?? 0,
     citedByCount: p.citationCount ?? 0,
     referencedWorks: citedWorks,

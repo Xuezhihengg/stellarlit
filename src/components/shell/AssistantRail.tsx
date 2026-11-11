@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AskPanel } from "@/components/shell/AskPanel";
 import { BuildStatus } from "@/components/shell/BuildStatus";
+import { GrowDetail } from "@/components/shell/GrowDetail";
+import { ResolveDetail } from "@/components/shell/ResolveDetail";
 import {
   DEFAULT_PAPER_SIDEBAR_STATE,
   PaperDetail,
@@ -43,6 +45,7 @@ export function AssistantRail({
   const error = useStarfieldStore((s) => s.error);
   const selectedId = useStarfieldStore((s) => s.selectedId);
   const streamProgress = useStarfieldStore((s) => s.streamProgress);
+  const query = useStarfieldStore((s) => s.query);
   const setQuery = useStarfieldStore((s) => s.setQuery);
   const search = useStarfieldStore((s) => s.search);
   const grow = useStarfieldStore((s) => s.grow);
@@ -175,17 +178,23 @@ export function AssistantRail({
               </div>
             ) : null}
 
-            {phase === "growing" || phase === "resolving" ? (
+            {phase === "growing" || phase === "resolving" || phase === "settling" ? (
               <BuildStatus
                 label={buildLabel}
-                step={phase === "growing" ? 3 : 1}
+                step={phase === "settling" ? 4 : phase === "growing" ? 3 : 1}
                 total={4}
-                detail={
-                  streamProgress
-                    ? `第 ${streamProgress.round}/${streamProgress.depth} 层 · 已判定 ${streamProgress.judged} 对论文 · 找到 ${streamProgress.matched} 条关系 · ${streamProgress.llmCalls} 次模型调用`
-                    : undefined
-                }
-              />
+              >
+                {phase === "resolving" ? (
+                  <ResolveDetail query={query} />
+                ) : (
+                  <GrowDetail
+                    name={payload?.starfield.name}
+                    stats={payload?.graph.stats ?? null}
+                    progress={streamProgress}
+                    complete={phase === "settling"}
+                  />
+                )}
+              </BuildStatus>
             ) : phase === "confirming" ? (
               <SeedConfirm
                 candidates={candidates}
@@ -331,10 +340,10 @@ export function AssistantRail({
 
 function EmptyState({ hasPayload }: { hasPayload: boolean }) {
   return (
-    <div className="flex flex-col gap-5 pt-1">
+    <div className="rail-guide-enter flex flex-col gap-5 pt-1">
       <p className="text-[12.5px] leading-[2] text-ink-2">
         {hasPayload
-          ? "点击任意星体查看它的论文详情与关系证据;要并入下一篇种子,用顶部的输入框。"
+          ? "点击任意星体查看详情与关系证据;要并入下一篇种子,用顶部输入框。要重新开始,点顶栏「新建」。"
           : "在顶部输入一篇种子论文,星空会沿着它的研究脉络长出来 —— 引用是引力线,关系是行星。"}
       </p>
       <ul className="flex flex-col gap-2.5 border-t border-hair pt-5">

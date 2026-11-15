@@ -321,7 +321,7 @@ docker compose up -d --build
 
 | 成员 | 角色 |
 | --- | --- |
-| Xuezhihengg | 队长 · 全栈 |
+| 薛志恒 | 队长 |
 | 张子桦 | 队员 |
 | 陈林涛 | 队员 |
 

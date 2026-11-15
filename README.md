@@ -1,198 +1,342 @@
-# StellarLit · 论文星图
+<p align="center">
+  <img src="docs/screenshots/00-home.png" alt="StellarLit 首页：把一篇论文，长成一片星空" />
+</p>
 
-> 2026 第九届「传智杯」全国大学生数智创新与 AI 应用大赛 · AI WEB 网页开发挑战赛
-> 赛道编号 10037 · 选题方向:RAG 知识问答系统(学术文献助手)
+<h1 align="center">StellarLit · 论文星图</h1>
 
-**输入一篇种子论文,星空沿着它的研究脉络长出来。**
+<p align="center"><strong>把一篇论文，长成一片星空。</strong></p>
 
-论文是星,关系是引力线。系统从种子论文出发,抽取它与邻域论文之间**预设的几种关系**
-(基线 / 同期 / 思路类似 / 同任务异方法 / 扩展 / 矛盾),把它们组织成一张可缩放、
-可追问的星图 —— 缩到最远是领域星云,推近是论文星体,任何一条关系都能点开看原文证据。
+<p align="center">
+输入标题、arXiv ID 或 DOI，沿着引用与语义关系长出一张可缩放、可追问的研究星图。<br/>
+每一条关系都带原文证据，每一次回答都能点回出处。
+</p>
+
+<p align="center">
+  <img alt="Next.js 15" src="https://img.shields.io/badge/Next.js-15.5-000?logo=nextdotjs&logoColor=white" />
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white" />
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white" />
+  <img alt="PostgreSQL 16" src="https://img.shields.io/badge/PostgreSQL-16-4169E1?logo=postgresql&logoColor=white" />
+  <img alt="Redis 7" src="https://img.shields.io/badge/Redis-7-DC382D?logo=redis&logoColor=white" />
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" />
+  <img alt="checks" src="https://img.shields.io/badge/checks-15%20passing-3FB950" />
+</p>
+
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#架构">架构</a> ·
+  <a href="docs/架构设计.md">设计文档</a> ·
+  <a href="docs/知识图谱模型.md">图谱模型</a> ·
+  <a href="docs/部署指南.md">部署指南</a>
+</p>
 
 ---
 
-## 一、它和 Connected Papers 有什么不同
+## 一、这是什么
 
-引文图谱这件事已经被做过了,所以本作品把重心放在三件**引文图谱做不到**的事上:
+StellarLit 是一个面向科研阅读的**关系型文献图谱**。论文是星，关系是引力线：输入一篇种子论文，
+系统从 OpenAlex 与 arXiv 抓取引文邻域，再用大模型判定论文之间的语义关系，最后组织成一张
+可缩放、可点选、可追问的星图。
 
-| 引文图谱能给 | StellarLit 额外给出 |
+它想解决的不是「找不到论文」，而是**「看得见引用，却看不见为什么相关」**：
+
+- **关系可质疑**：六类语义关系都有判定标准与硬约束，每条边都必须带原文片段作为证据。
+- **星空会长大**：同一片星空可以反复并入新种子，节点坐标持久，老星体不会被重新洗牌。
+- **图谱能对话**：基于摘要与关系证据的检索增强问答，回答里的角标可以点回原文；也支持上传图表提问。
+
+> 2026 第九届「传智杯」全国大学生数智创新与 AI 应用大赛 · AI WEB 网页开发挑战赛
+> 赛道编号 10037 · 选题方向：RAG 知识问答系统（学术文献助手）
+
+## 二、核心能力
+
+| 能力 | 实现 |
 | --- | --- |
-| 谁引用了谁 | **为什么算同一种关系**,以及原文里哪句话支持这个判断 |
-| 一张静态的相似度图 | 分成六种**语义关系**,各自有判定标准与硬约束 |
-| 只能看 | **能问**:基于论文摘要与已验证关系证据的检索增强问答,回答里的角标可以点回原文 |
+| **大模型集成** | OpenAI 兼容接口，多厂商可切换；结构化 JSON 判定 + SSE 流式回答；超时、解析失败与额度不足都有降级路径 |
+| **Agent 工作流** | 规划 → MCP 工具调用 → 证据覆盖判定 → 补查或停止，最多 2 轮 / 5 步；每个决策都在界面留下轨迹 |
+| **RAG** | 摘要与关系原文切块；BM25 + 向量双路召回；RRF 融合、图结构扩展、意图重排与证据阈值 |
+| **多模态** | 最多 4 张图；视觉模型抽取 OCR、表格、图表序列、关键数值与归一化区域坐标；证据可点击定位 |
+| **AI 安全** | 输入净化、资料与指令隔离、IP 限流与并发上限、每账号每日 token 预算、输出兜底 |
+| **MCP** | 9 个只读工具，stdio 与 HTTP 双入口，个人访问令牌，外部 Agent 可自行读取星空与检索原文 |
 
-第一行是关键:引文图谱画的是「已经连起来的线」,而**关系可以被质疑、可以被追溯**。
-本系统里任何一条由大模型给出的边,都必须携带至少一段原文片段作为证据。
+## 三、界面
 
-## 二、三个核心机制
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/01-starfield.png" alt="星图画布" /><br/><sub><b>星图画布</b>：语义缩放，拉远是领域星云，推近是论文星体</sub></td>
+<td width="50%"><img src="docs/screenshots/02-evidence.png" alt="论文详情与关系证据" /><br/><sub><b>关系证据</b>：点开星体即可看到摘要、关系类型与原文依据</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/03-ask.png" alt="检索增强问答" /><br/><sub><b>文献问答</b>：流式回答、角标引用、决策轨迹与证据卡</sub></td>
+<td width="50%"><img src="docs/screenshots/04-history.png" alt="历史星空" /><br/><sub><b>历史星空</b>：真实星图缩略预览，一键回到上次的研究现场</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/05-settings.png" alt="模型服务设置" /><br/><sub><b>模型服务</b>：按账号绑定多厂商账户，分别选择判定 / 问答 / 翻译模型</sub></td>
+<td width="50%"><img src="docs/screenshots/06-mcp.png" alt="MCP 工具" /><br/><sub><b>MCP 工具</b>：只读工具清单与接入配置，外部 Agent 即插即用</sub></td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/screenshots/07-relations.png" alt="关系判定设置" /><br/><sub><b>关系判定</b>：六类关系各自有引用约束、年份差、相似度与证据标准，支持自定义多标签关系</sub></td>
+</tr>
+</table>
 
-**1. 分层图谱(见 [docs/知识图谱模型.md](docs/知识图谱模型.md))**
+## 四、架构
 
-按**可核验程度**分三层,而不是按业务模块分:
+整体分四层：浏览器负责渲染与交互，Route Handlers 负责鉴权、限流与流式输出，
+Agent 与 RAG 负责「查什么、够不够」，数据层负责持久化与跨实例缓存。
 
+```mermaid
+flowchart TB
+  subgraph Browser["浏览器"]
+    Home["首页 / 种子输入"]
+    Canvas["星图画布<br/>Canvas 2D 渲染"]
+    Panel["观星台 / 文献问答"]
+  end
+
+  subgraph Next["Next.js 15 · Route Handlers"]
+    Ask["/api/ask<br/>SSE 流式"]
+    Star["/api/starfield"]
+    McpApi["/api/mcp"]
+    SettingsApi["/api/model-settings"]
+  end
+
+  subgraph Agent["Agent 闭环"]
+    Plan["规划器"]
+    Exec["工具执行"]
+    Assess["证据覆盖判定"]
+  end
+
+  subgraph RAG["混合检索"]
+    Chunk["证据切块"]
+    BM25["BM25 词面召回"]
+    Embed["向量召回"]
+    Fuse["RRF 融合 · 图扩展 · 重排"]
+  end
+
+  subgraph Model["模型服务 · 按账号绑定"]
+    LLM["问答 / 关系判定"]
+    EmbModel["Embedding"]
+  end
+
+  subgraph Data["持久化"]
+    PG[("PostgreSQL 16")]
+    Redis[("Redis 7")]
+    Media[("data/media")]
+  end
+
+  Sources["OpenAlex · arXiv · Semantic Scholar"]
+
+  Home --> Star
+  Canvas --> Star
+  Panel --> Ask
+  Ask --> Plan --> Exec
+  Exec --> Chunk
+  Chunk --> BM25
+  Chunk --> Embed
+  BM25 --> Fuse
+  Embed --> Fuse
+  Exec --> Assess
+  Assess -->|证据不足| Plan
+  Assess -->|证据足够| LLM
+  Fuse --> LLM
+  Embed --> EmbModel
+  Star --> Sources
+  Star --> PG
+  Ask --> PG
+  SettingsApi --> LLM
+  SettingsApi --> EmbModel
+  McpApi --> PG
+  Ask --> Redis
+  Star --> Redis
 ```
-L3 派生层   社区 / 领域 / 潜在连接     图算法,可复算
-L2 语义层   六种关系 + 证据链          大模型,必须给出原文依据
-L1 结构层   引用 / 作者 / 发表 / 提及   上游数据源,权威可查
+
+**分层不是口号。** 代码依赖严格单向：`types → lib → features → components → app`，
+服务端密钥只存在于 `src/server`。任何反向依赖都会被 ESLint 的 `no-restricted-imports` 直接报错，
+不靠自觉。图谱分成三层：L1 结构层（引用 / 作者 / 发表）、L2 语义层（六类关系 + 证据链）、
+L3 派生层（社区 / 领域 / 潜在连接），详见 [知识图谱模型](docs/知识图谱模型.md)。
+
+### 一次问答如何发生
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as 用户
+  participant W as 前端
+  participant A as /api/ask
+  participant G as Agent
+  participant T as MCP 工具
+  participant R as 混合检索
+  participant M as 大模型
+
+  U->>W: 提问（可附最多 4 张图）
+  W->>A: POST（SSE）
+  A->>A: 限流 · 预算 · 输入净化
+  A->>G: 初始规划
+  loop 最多 2 轮 / 5 步
+    G->>T: 检索原文 / 查关系证据 / 展开引文
+    T->>R: BM25 + 向量 + 图扩展
+    R-->>G: 证据块与覆盖诊断
+    G->>G: 确定性停止判定
+  end
+  G->>M: 证据与问题（资料与指令隔离）
+  M-->>W: 流式回答
+  W-->>U: 角标引用 · 决策轨迹 · 图像证据
 ```
 
-依赖严格单向。收益是:界面上任何一处信息,都能立刻回答"这是谁说的、凭什么"。
+停止判断不交给模型：覆盖率达到阈值、轮次耗尽或工具无新增证据时，由确定性规则给出停止理由。
+模型只决定「下一步查什么」，这样轨迹才能复现，也才能在界面上解释「为什么停」。
 
-**2. 两段式关系判定**
-
-先用确定性硬约束(年份差、是否互引、是否共享任务)把候选砍掉一大半,
-再让模型在少量候选上按 rubric 判定并要求给出证据。既压住了 token 成本,
-也让模型只在它擅长的地方发言。
-
-**3. 星空是会长大的**
-
-同一片星空下可以多次输入种子,增量构建。节点的坐标是**持久属性** ——
-新内容进来时老星体留在原地,世界只做对称长大,而不是整张图重新洗牌。
-
-## 三、技术栈
+## 五、技术栈
 
 | 层 | 选型 | 为什么 |
 | --- | --- | --- |
-| 框架 | Next.js 15 (App Router) + React 19 + TypeScript(strict) | 赛题首选;AI 接入层直接走 Route Handlers |
-| 样式 | Tailwind CSS v4(CSS-first `@theme`) | 设计令牌即 CSS 变量,换主题 = 换一套变量 |
+| 框架 | Next.js 15（App Router）+ React 19 + TypeScript strict | 页面与 Route Handlers 同仓；AI 接入层不额外起服务 |
+| 样式 | Tailwind CSS v4（CSS-first `@theme`） | 设计令牌即 CSS 变量，换主题 = 换一套变量 |
 | 状态 | Zustand | 只有跨组件共享的状态才进 store |
-| 渲染 | Canvas 2D(自写渲染管线) | 上千节点下比 SVG/DOM 稳;绘制是纯函数,可脱离 React 测试 |
-| AI | OpenAI 兼容接口(可换供应商)+ 流式输出 | 不绑定单一厂商;模型配置按账号隔离 |
-| 数据库 | PostgreSQL 16+ (`pg` 连接池 + JSONB) | 多账号并发写、事务与行级隔离 |
-| 缓存 | Redis(`ioredis`,TTL + 跨实例共享) | 星空 / 邻域 / 关系 / 图像分析缓存与上游节流 |
-| 数据 | OpenAlex / arXiv / Semantic Scholar | 全部免费且有官方 API |
+| 渲染 | Canvas 2D 自写管线 | 数百至上千节点下比 SVG / DOM 稳；绘制是纯函数，可脱离 React 测试 |
+| AI | OpenAI 兼容接口 | 不绑定单一厂商；模型、密钥、绑定均按账号隔离 |
+| 数据库 | PostgreSQL 16（`pg` + JSONB） | 多账号并发写、事务与行级隔离 |
+| 缓存 | Redis 7（`ioredis`） | TTL、跨实例共享、上游 host 节流；不可用时自动降级 |
+| 数据 | OpenAlex / arXiv / Semantic Scholar | 免费且有官方 API；OpenAlex 使用账号注册邮箱进入礼貌池 |
 
-## 四、快速开始
+## 六、快速开始
 
-需要 Node.js 24+、PostgreSQL 16+ 与 Redis 7+。先建库并确认 Redis 可用:
-
-```bash
-createdb stellarlit          # 或 createdb stellarlit_test(跑自检用)
-redis-cli ping                # 应返回 PONG;连接串不是本机时改 REDIS_URL
-pnpm install
-cp .env.example .env.local    # 可选:填写 DATABASE_URL / Redis / 数据源配置
-pnpm key:generate             # 生成主密钥,把输出写进 .env.local 的 ENCRYPTION_KEY
-pnpm dev                      # http://localhost:3000,首次打开先注册账号
-
-pnpm check                     # 类型 + 规范 + RAG / Agent / 安全 / 持久化自检
-pnpm cleanup                   # 手动跑一次缓存/会话清理(定时任务也可调接口)
-pnpm build && pnpm start
-```
-
-服务端会在数据库首次就绪后自动跑一次清理,之后按 `MAINTENANCE_INTERVAL_MIN`
-(默认 6 小时)重复:清过期会话、淘汰图像分析缓存、按容量/时间清理 `data/cache/`。
-问答历史里的图片预览不在数据库里,而是内容寻址地存在 `data/media/`;清理任务会
-顺带删除超过 24 小时、已没有任何历史引用的孤儿对象。
-生产环境可用 `POST /api/maintenance/cleanup` + `MAINTENANCE_TOKEN` 接入 Cron;
-Redis 不可用时会自动降级为直接读源,不会把站点打挂。
-
-首次启动会自动建表,并把仓库自带的 `data/starfields/*.json` 与
-`data/model-settings.json` 导入为 `legacy`。注册的第一个账号会自动接管这些星空、
-问答历史、自定义预设与整套模型配置;之后再注册的账号从空开始。模型服务
-(API Key、模型清单、服务绑定、向量模型)按账号隔离,切换账号就是切换整套配置。
-设置页保存的 API Key 使用 AES-256-GCM 加密后落库,主密钥来自 `ENCRYPTION_KEY`;
-已有的明文密钥可用 `pnpm secrets:migrate` 一次性加密。每个账号有独立的每日 token
-预算,顶栏下拉与 `/account` 页面会显示已用与剩余;关系预设只保存在服务端,
-切换账号不会串。
-
-## 五、Docker 部署(服务器)
-
-服务器只需 Docker 24+ 与 Compose v2。镜像采用多阶段构建,运行态是 Next.js
-standalone,不携带源码与开发依赖;应用、PostgreSQL、Redis 由 Compose 一起编排。
-完整步骤(反向代理、HTTPS、备份恢复、排障)见 [`docs/部署指南.md`](docs/部署指南.md)。
+### Docker（推荐）
 
 ```bash
-git clone <仓库地址> stellarlit && cd stellarlit
+git clone https://github.com/Xuezhihengg/stellarlit.git
+cd stellarlit
 cp .env.docker.example .env
-openssl rand -hex 24      # 写入 POSTGRES_PASSWORD
-openssl rand -base64 32   # 写入 ENCRYPTION_KEY
-# 模型服务与 Semantic Scholar Key 登录后在设置页绑定
+openssl rand -hex 24      # 填入 POSTGRES_PASSWORD
+openssl rand -base64 32   # 填入 ENCRYPTION_KEY
 docker compose up -d --build
-docker compose logs -f app
 ```
 
-打开 `http://<服务器IP>:3000` 并注册第一个账号。首次启动会自动建表,镜像里的
-演示星空会在数据卷为空时导入为 `legacy`,第一个注册账号会接管它。
+打开 `http://localhost:3000`，注册第一个账号即可。首个账号会接管仓库自带的演示星空。
+模型服务、向量模型与 Semantic Scholar Key 全部在登录后的「设置」里按账号绑定，
+系统不读取部署级模型密钥。
 
-- 持久化:`postgres-data` 卷存数据库,`redis-data` 卷存缓存,宿主 `./data`
-  存媒体对象与磁盘缓存;重建镜像不会动这三处。
-- 反向代理:用 Nginx/Caddy 时把 `.env` 里的 `APP_BIND` 改为 `127.0.0.1`,
-  转发到容器 `3000`;必须透传 `X-Forwarded-Proto` 与 `X-Forwarded-For`,
-  否则登录 Cookie 的 Secure 判断和按 IP 限流会失真。
-- 流式问答走 SSE,Nginx 需要 `proxy_buffering off;` 与较长的
-  `proxy_read_timeout`,否则回答会攒到最后才一次性出现。
-- 更新:`git pull && docker compose up -d --build`。
-- 备份:数据库、`./data` 与 `.env` 里的 `ENCRYPTION_KEY` 必须一起备份;
-  主密钥丢失后,库里已加密的厂商 API Key 无法恢复。
+### 本地开发
+
+需要 Node.js 24+、PostgreSQL 16+、Redis 7+。
 
 ```bash
-docker compose exec -T postgres pg_dump -U stellarlit stellarlit > backup-$(date +%F).sql
-tar czf data-$(date +%F).tgz data
+createdb stellarlit
+redis-cli ping                # 应返回 PONG
+pnpm install
+cp .env.example .env.local
+pnpm key:generate             # 输出写入 ENCRYPTION_KEY
+pnpm dev                      # http://localhost:3000
 ```
 
-构建上下文已通过 `.dockerignore` 排除 `.env*`,密钥只在运行时经 `env_file`
-注入容器。
-
-## 六、目录结构
-
+```bash
+pnpm check                    # 类型、规范与 13 组领域自检
+pnpm build && pnpm start      # 生产构建
+pnpm cleanup                  # 手动执行一次缓存与会话清理
 ```
+
+### 环境变量
+
+完整模板见 [`.env.example`](.env.example) 与 [`.env.docker.example`](.env.docker.example)。
+
+| 变量 | 必填 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| `DATABASE_URL` | 否 | `postgresql://localhost:5432/stellarlit` | PostgreSQL 连接串；首次启动自动建表 |
+| `REDIS_URL` | 建议 | `redis://localhost:6379` | 不可用时自动降级为直接读源 |
+| `ENCRYPTION_KEY` | 生产必填 | — | 32 字节主密钥，AES-256-GCM 加密厂商 API Key；丢失不可恢复 |
+| `SAFETY_DAILY_TOKEN_BUDGET` | 否 | `400000` | 每账号每日 token 预算，与账号页、顶栏用量联动 |
+| `MAINTENANCE_TOKEN` | 生产必填 | — | `/api/maintenance/cleanup` 的 Bearer 令牌 |
+| `MAINTENANCE_INTERVAL_MIN` | 否 | `360` | 后台清理间隔（分钟） |
+| `STELLARLIT_DATA_DIR` | 否 | `./data` | 媒体对象与磁盘缓存目录 |
+| `REDIS_PREFIX` | 否 | `stellarlit` | 多实例共用 Redis 时的命名空间 |
+| `STELLARLIT_MCP_TOKEN` | 否 | — | 仅 stdio 入口 `pnpm mcp` 需要；HTTP 入口用设置页生成的个人令牌 |
+
+缓存容量、TTL、星空体积上限等调优项见 `.env.example` 注释。Compose 额外使用
+`POSTGRES_PASSWORD`、`APP_BIND`、`APP_PORT`。完整依赖清单见 [`package.json`](package.json)
+与 `pnpm-lock.yaml`。
+
+## 七、目录结构
+
+```text
 src/
-├─ app/                  路由与页面组装(唯一允许接触全部层的地方)
+├─ app/                  路由与页面组装（唯一允许接触全部层的地方）
 ├─ components/
-│  ├─ star-map/          画布:星空渲染管线
-│  ├─ shell/             界面外壳:顶栏、助手栏、底部
-│  └─ ui/                纯展示组件(不认识业务,不认识状态)
-├─ features/             业务域:按功能切,不按技术切
+│  ├─ star-map/          画布：星空渲染管线
+│  ├─ shell/             界面外壳：顶栏、观星台、底部
+│  └─ ui/                纯展示组件（不认识业务，不认识状态）
+├─ features/             业务域：按功能切，不按技术切
 ├─ hooks/                应用级 hook
 ├─ lib/
-│  ├─ graph/             图算法:纯函数,无 IO,可单测
+│  ├─ graph/             图算法：纯函数，无 IO，可单测
 │  └─ design/            设计令牌
-├─ server/               服务端:数据源接入、大模型调用(密钥只在这里)
+├─ server/
+│  ├─ agent/             规划、执行、覆盖判定与停止
+│  ├─ rag/               切块、召回、融合、重排、图像索引
+│  ├─ mcp/               只读工具与协议实现
+│  ├─ safety/            限流、预算、输入净化
+│  └─ db/                连接池、迁移与各领域仓储
 ├─ stores/               Zustand
 └─ types/                数据契约
-docs/                    设计文档(知识图谱模型 / 架构 / 工程规范)
-scripts/                 一次性与诊断脚本
+docs/                    架构、图谱模型、部署指南与截图
+scripts/                 自检、探针、密钥迁移与 MCP 服务
 ```
 
-依赖方向单向:`types → lib → features → components → app`。
-反向依赖由 ESLint 的 `no-restricted-imports` 直接报错,不靠自觉。
+## 八、质量保障
 
-## 七、进度
+`pnpm check` 是一条可重复的验收线，覆盖 15 项：
 
-- [x] 知识图谱模型设计(三层图谱 + 证据链 + 关系预设)
-- [x] 工程骨架:Next.js 15 + TS strict + Tailwind v4 + ESLint 分层规则,构建与类型全绿
-- [x] 设计系统与背景星空(双主题、视差星尘、令牌一致性校验)
-- [x] 文献数据源接入(种子解析 → 用户确认 → 引文邻域展开,含质量闸门与去重)
-- [x] 关系判定管道(硬约束过滤 + 模型判定 + 引用核验 + 启发式降级)
-- [x] 星图渲染:语义缩放(领域星云 ↔ 研究前沿 ↔ 论文星体)与增量构建
-- [x] 设置页(模型配置、关系预设编辑)与历史星空页
-- [x] 检索增强问答:摘要/关系证据切块 → BM25 检索 + 图扩展 → 流式回答 + 可点击引用角标
-- [ ] 全文切块与向量检索(当前语料为摘要与关系证据;arXiv 全文接入是下一步)
-- [x] 多模态文献问答(用户上传论文图表/截图,按服务绑定视觉模型)
-- [ ] 端到端测试与演示脚本
+```text
+typecheck · lint · tokens · label · rag · multimodal · providers · relations
+mcp · agent · safety · crypto · cache · db · auth
+```
 
-### 已知限制
-
-- **没有大模型密钥时,六类关系里只有四类能给出结果**。基线与扩展依赖引用结构,
-  同任务异方法依赖主题重叠,而「结论矛盾」需要模型真的读过摘要 ——
-  没有密钥时它返回空,并在界面上标注为启发式判定,而不是编一个结论出来。
-- **「同期」在枢纽型种子(如一篇被引上万的工作)上通常为空**,这是定义决定的:
-  它要求两篇互不引用,而枢纽论文的邻域几乎都引用了它。这一条最可能在多篇种子之间出现。
-- 语义证据目前只能定位到摘要级别。全文切块接入后才会精确到章节与字符偏移。
-
-## 八、诊断工具
+其中 `rag` / `agent` / `safety` / `mcp` 等脚本直接调用生产代码路径，验证检索融合、停止判定、
+提示词隔离与协议自检，而不是另写一份「测试专用实现」。仓库保留分阶段提交历史（80+ 次），
+每个能力都能追溯到引入它的那次改动。关系判定出问题时，可以用探针复现模型实际看到的提示词：
 
 ```bash
-pnpm probe baseline 3      # 打印某一类关系的候选、完整提示词与模型原始回答
+pnpm probe baseline 3
 ```
 
-判定类功能的故障有两种,在界面上长得一模一样:「模型认为都不成立」和
-「管道根本没把候选送到模型」。这个探针把两者分开:它复用**生产代码里的同一个提示词构造器**,
-因此看到的就是模型实际看到的东西。六类关系全部为零那次,就是靠它定位到
-「证据标准与可用数据不匹配」的。
+## 九、部署
 
-## 九、赛事合规
+生产环境只需要 Docker 24+ 与 Compose v2，应用、PostgreSQL、Redis 一起编排：
 
-- 仓库保留完整的开发提交历史
-- 不提交任何 API Key;模型密钥按账号加密落库,主密钥只走环境变量(仓库内仅提供 `.env.example`)
-- 全部代码可解释、可现场演示
+```bash
+cp .env.docker.example .env
+docker compose up -d --build
+```
+
+反向代理、HTTPS、备份恢复、定时清理与故障排查见 [部署指南](docs/部署指南.md)。
+核心提醒：SSE 必须关闭反代缓冲；`ENCRYPTION_KEY`、数据库与 `./data` 必须一起备份。
+
+## 十、已知限制
+
+- **语义证据目前到摘要与关系原文级别**，尚未按章节对 arXiv 全文切块；接入全文后引用可以精确到章节与字符偏移。
+- **「同期」在枢纽型种子上通常为空**：它要求两篇互不引用，而高被引论文的邻域几乎都引用了它，这是定义决定的。
+- **没有模型时只保留结构关系**：基线与扩展依赖引用结构，同任务异方法依赖主题重叠；需要读摘要的判定会明确标注为启发式，而不是编造结论。
+- **多模态当前覆盖文本与图像**，语音与视频尚未接入，已在路线图中。
+
+## 十一、团队
+
+**西安交通大学 · 白白BAB · 研究生组**<br/>
+指导教师：白秀秀
+
+| 成员 | 角色 |
+| --- | --- |
+| Xuezhihengg | 队长 · 全栈 |
+| 张子桦 | 队员 |
+| 陈林涛 | 队员 |
+
+2026 第九届「传智杯」全国大学生数智创新与 AI 应用大赛 · AI WEB 网页开发挑战赛 · 赛道 10037。
+
+## 十二、文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [架构设计](docs/架构设计.md) | 分层、边界、数据流与关键取舍 |
+| [知识图谱模型](docs/知识图谱模型.md) | 三层图谱、六类关系、证据链与置信度 |
+| [前端工程规范](docs/前端工程规范.md) | 目录约定、依赖方向、组件与样式规范 |
+| [部署指南](docs/部署指南.md) | Docker、反向代理、HTTPS、备份与排障 |
+| [参赛提交清单](docs/参赛提交清单.md) | 材料核对、评分项对照与演示脚本 |
+
+---
+
+<p align="center"><sub>把文献调研，从「读列表」变成「看星空」。</sub></p>

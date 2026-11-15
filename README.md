@@ -99,6 +99,7 @@ Redis 不可用时会自动降级为直接读源,不会把站点打挂。
 
 服务器只需 Docker 24+ 与 Compose v2。镜像采用多阶段构建,运行态是 Next.js
 standalone,不携带源码与开发依赖;应用、PostgreSQL、Redis 由 Compose 一起编排。
+完整步骤(反向代理、HTTPS、备份恢复、排障)见 [`docs/部署指南.md`](docs/部署指南.md)。
 
 ```bash
 git clone <仓库地址> stellarlit && cd stellarlit

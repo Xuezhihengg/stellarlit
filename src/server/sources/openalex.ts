@@ -7,9 +7,9 @@
  *   3. topics 的 field / subfield / topic 三级分类,当作零成本的语义标签
  */
 
-import { serverConfig } from "../config";
 import { fetchJson } from "../http";
 import { formatPaperText } from "@/lib/format";
+import type { SourceContext } from "./context";
 
 const OA = "https://api.openalex.org";
 
@@ -150,17 +150,25 @@ function toWork(r: RawWork): OaWork {
 /** 过滤值里的逗号/冒号会破坏 OpenAlex 的查询语法,必须清掉。 */
 const clean = (s: string): string => s.replace(/[,:|]/g, " ").replace(/\s+/g, " ").trim();
 
-const mailto = () => `mailto=${encodeURIComponent(serverConfig.openalexMailto)}`;
+/** 带上当前账号邮箱进入 OpenAlex 礼貌池;没有身份时匿名调用。 */
+function withMailto(url: string, source?: SourceContext): string {
+  const email = source?.mailto.trim();
+  if (!email) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  return `${url}${sep}mailto=${encodeURIComponent(email)}`;
+}
 
-export async function getWorkById(id: string): Promise<OaWork | null> {
-  const raw = await fetchJson<RawWork>(`${OA}/works/${id}?select=${SELECT}&${mailto()}`);
+export async function getWorkById(id: string, source?: SourceContext): Promise<OaWork | null> {
+  const raw = await fetchJson<RawWork>(
+    withMailto(`${OA}/works/${id}?select=${SELECT}`, source),
+  );
   return raw.id ? toWork(raw) : null;
 }
 
-export async function getWorkByDoi(doi: string): Promise<OaWork | null> {
+export async function getWorkByDoi(doi: string, source?: SourceContext): Promise<OaWork | null> {
   try {
     const raw = await fetchJson<RawWork>(
-      `${OA}/works/doi:${encodeURIComponent(doi)}?select=${SELECT}&${mailto()}`,
+      withMailto(`${OA}/works/doi:${encodeURIComponent(doi)}?select=${SELECT}`, source),
     );
     return raw.id ? toWork(raw) : null;
   } catch {
@@ -174,10 +182,16 @@ export async function getWorkByDoi(doi: string): Promise<OaWork | null> {
  * 注意必须用 `title.search:` 而不是 `search=`:后者是全文相关度,
  * 实测搜 "attention is all you need" 的第一名是一篇讲逻辑与编程的论文。
  */
-export async function searchWorksByTitle(title: string, perPage = 8): Promise<OaWork[]> {
-  const url =
+export async function searchWorksByTitle(
+  title: string,
+  perPage = 8,
+  source?: SourceContext,
+): Promise<OaWork[]> {
+  const url = withMailto(
     `${OA}/works?filter=${encodeURIComponent(`title.search:${clean(title)}`)}` +
-    `&sort=cited_by_count:desc&per-page=${perPage}&select=${SELECT}&${mailto()}`;
+      `&sort=cited_by_count:desc&per-page=${perPage}&select=${SELECT}`,
+    source,
+  );
   const raw = await fetchJson<{ results?: RawWork[] }>(url);
   return (raw.results ?? []).map(toWork);
 }
@@ -193,14 +207,16 @@ export async function searchWorks(opts: {
   fromYear?: number;
   toYear?: number;
   limit?: number;
-}): Promise<OaWork[]> {
+}, source?: SourceContext): Promise<OaWork[]> {
   const { query, fromYear, toYear, limit = 60 } = opts;
   const filters = [`title_and_abstract.search:${clean(query)}`];
   if (fromYear) filters.push(`from_publication_date:${fromYear}-01-01`);
   if (toYear) filters.push(`to_publication_date:${toYear}-12-31`);
-  const url =
+  const url = withMailto(
     `${OA}/works?filter=${encodeURIComponent(filters.join(","))}` +
-    `&sort=cited_by_count:desc&per-page=${Math.min(200, limit)}&select=${SELECT}&${mailto()}`;
+      `&sort=cited_by_count:desc&per-page=${Math.min(200, limit)}&select=${SELECT}`,
+    source,
+  );
   const raw = await fetchJson<{ results?: RawWork[] }>(url);
   return (raw.results ?? []).map(toWork);
 }
@@ -209,15 +225,21 @@ export async function searchWorks(opts: {
  * 谁引用了这篇(向前引用),按被引量降序 ——
  * 高被引的引用者才是主干,低被引的引用者往往是噪声。
  */
-export async function getCitingWorks(id: string, limit = 200): Promise<OaWork[]> {
+export async function getCitingWorks(
+  id: string,
+  limit = 200,
+  source?: SourceContext,
+): Promise<OaWork[]> {
   const out: OaWork[] = [];
   let cursor = "*";
   const perPage = Math.min(200, limit);
   while (out.length < limit && cursor) {
-    const url =
+    const url = withMailto(
       `${OA}/works?filter=${encodeURIComponent(`cites:${id}`)}` +
-      `&sort=cited_by_count:desc&per-page=${perPage}&cursor=${cursor}` +
-      `&select=${SELECT}&${mailto()}`;
+        `&sort=cited_by_count:desc&per-page=${perPage}&cursor=${cursor}` +
+        `&select=${SELECT}`,
+      source,
+    );
     const raw = await fetchJson<{ results?: RawWork[]; meta?: { next_cursor?: string | null } }>(url);
     const batch = (raw.results ?? []).map(toWork);
     out.push(...batch);
@@ -228,13 +250,15 @@ export async function getCitingWorks(id: string, limit = 200): Promise<OaWork[]>
 }
 
 /** 批量取元数据(OpenAlex 单次 `openalex_id:` 过滤最多 50 个 ID)。 */
-export async function getWorksByIds(ids: string[]): Promise<OaWork[]> {
+export async function getWorksByIds(ids: string[], source?: SourceContext): Promise<OaWork[]> {
   const out: OaWork[] = [];
   for (let i = 0; i < ids.length; i += 50) {
     const chunk = ids.slice(i, i + 50);
-    const url =
+    const url = withMailto(
       `${OA}/works?filter=${encodeURIComponent(`openalex_id:${chunk.join("|")}`)}` +
-      `&per-page=${chunk.length}&select=${SELECT}&${mailto()}`;
+        `&per-page=${chunk.length}&select=${SELECT}`,
+      source,
+    );
     const raw = await fetchJson<{ results?: RawWork[] }>(url);
     out.push(...(raw.results ?? []).map(toWork));
   }

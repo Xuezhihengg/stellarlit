@@ -11,6 +11,7 @@ import type { SeedCandidate } from "@/types/starfield";
 
 import { getArxivEntries, searchArxiv } from "../sources/arxiv";
 import { getWorkById, getWorkByDoi, searchWorksByTitle, type OaWork } from "../sources/openalex";
+import type { SourceContext } from "../sources/context";
 
 export type SeedKind = "arxiv" | "doi" | "openalex" | "title";
 
@@ -131,10 +132,11 @@ async function matchByTitle(
   title: string,
   year: number | undefined,
   known: ReadonlySet<string>,
+  source?: SourceContext,
 ): Promise<SeedCandidate[]> {
   let works;
   try {
-    works = await searchWorksByTitle(title, 8);
+    works = await searchWorksByTitle(title, 8, source);
   } catch {
     /**
      * OpenAlex 不可用时退回 arXiv。
@@ -176,26 +178,27 @@ async function matchByTitle(
 export async function resolveSeed(
   raw: string,
   known: ReadonlySet<string> = new Set(),
+  source?: SourceContext,
 ): Promise<SeedCandidate[]> {
   const q = parseSeedQuery(raw);
 
   if (q.kind === "openalex") {
-    const w = await getWorkById(q.value);
+    const w = await getWorkById(q.value, source);
     return w ? [toCandidate(w, 1, "OpenAlex ID 精确匹配", known)] : [];
   }
 
   if (q.kind === "doi") {
-    const w = await getWorkByDoi(q.value);
+    const w = await getWorkByDoi(q.value, source);
     return w ? [toCandidate(w, 1, "DOI 精确匹配", known)] : [];
   }
 
   if (q.kind === "arxiv") {
     const [entry] = await getArxivEntries([q.value]);
     if (!entry) return [];
-    const candidates = await matchByTitle(entry.title, entry.year, known);
+    const candidates = await matchByTitle(entry.title, entry.year, known, source);
     // 把 arXiv ID 标到最佳匹配上,便于界面显示与后续取全文
     return candidates.map((c, i) => (i === 0 ? { ...c, reason: `${c.reason} · arXiv:${entry.arxivId}` } : c));
   }
 
-  return matchByTitle(q.value, undefined, known);
+  return matchByTitle(q.value, undefined, known, source);
 }

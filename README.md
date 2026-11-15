@@ -70,7 +70,7 @@ L1 结构层   引用 / 作者 / 发表 / 提及   上游数据源,权威可查
 createdb stellarlit          # 或 createdb stellarlit_test(跑自检用)
 redis-cli ping                # 应返回 PONG;连接串不是本机时改 REDIS_URL
 pnpm install
-cp .env.example .env.local    # 可选:填写 DATABASE_URL / 环境变量回退配置
+cp .env.example .env.local    # 可选:填写 DATABASE_URL / Redis / 数据源配置
 pnpm key:generate             # 生成主密钥,把输出写进 .env.local 的 ENCRYPTION_KEY
 pnpm dev                      # http://localhost:3000,首次打开先注册账号
 
@@ -105,7 +105,7 @@ git clone <仓库地址> stellarlit && cd stellarlit
 cp .env.docker.example .env
 openssl rand -hex 24      # 写入 POSTGRES_PASSWORD
 openssl rand -base64 32   # 写入 ENCRYPTION_KEY
-# 再填写 LLM_API_KEY / OPENALEX_MAILTO 等
+# 模型服务与 Semantic Scholar Key 登录后在设置页绑定
 docker compose up -d --build
 docker compose logs -f app
 ```

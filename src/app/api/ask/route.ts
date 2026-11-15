@@ -10,6 +10,7 @@ import {
   extractiveAnswer,
 } from "@/server/rag/answer";
 import { requireUser } from "@/server/auth/require";
+import { resolveServiceModel } from "@/server/model-settings";
 import { loadStarfield } from "@/server/starfield/store";
 import { screenQuestion } from "@/server/safety/guard";
 import { beginRun, checkBudget, checkLimit } from "@/server/safety/limits";
@@ -107,6 +108,19 @@ export async function POST(req: Request): Promise<Response> {
     return NextResponse.json(
       { error: "这片星空不存在或已被删除", code: "not_found" },
       { status: 404 },
+    );
+  }
+
+  // 模型只来自当前账号的设置;没有绑定就不生成回答,不静默退回检索摘录。
+  const askModel = await resolveServiceModel(auth.user.id, "ask");
+  if (!askModel) {
+    return NextResponse.json(
+      {
+        error: "还没有绑定问答模型",
+        hint: "在设置页添加服务商,并为「问答」选择模型后再试。",
+        code: "model_not_configured",
+      },
+      { status: 409 },
     );
   }
 

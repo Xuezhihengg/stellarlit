@@ -3,7 +3,7 @@
  *
  * 账户、模型清单、服务绑定、向量绑定都落在 owner_id 下:切换账号就是切换
  * 整套 API Key 与模型选择,不再有「全站共用一份部署配置」的漏洞。
- * 环境变量只在当前账号没有绑定任何模型时兜底,方便纯部署 / 演示场景。
+ * 这里不读取任何模型环境变量:没有绑定就是没有模型,由界面引导用户去设置。
  */
 
 import type {
@@ -15,7 +15,6 @@ import type {
   SaveModelSettingsRequest,
 } from "@/types/model-settings";
 
-import { serverConfig } from "./config";
 import {
   ensureLegacyModelSettings,
   readStoredSettings,
@@ -130,22 +129,6 @@ export async function saveModelSettings(
   return toPublic(settings);
 }
 
-function envTarget(): ResolvedModelTarget | null {
-  if (!serverConfig.llm.enabled) return null;
-  const provider: ModelProviderId = /anthropic/i.test(serverConfig.llm.baseUrl)
-    ? "anthropic"
-    : "custom";
-  return {
-    accountId: "env-default",
-    provider,
-    baseUrl: serverConfig.llm.baseUrl,
-    apiKey: serverConfig.llm.apiKey ?? "",
-    model: serverConfig.llm.model,
-    name: `环境变量 · ${serverConfig.llm.model}`,
-    modalities: ["text"],
-  };
-}
-
 export async function resolveModelById(
   ownerId: string,
   id: string,
@@ -178,12 +161,7 @@ export async function resolveAccountCredentials(ownerId: string, accountId: stri
   };
 }
 
-/**
- * 向量模型解析顺序:当前账号设置页绑定 → 环境变量回退。
- *
- * 设置页是主入口:同一个服务商账户既可用于聊天,也可单独绑定向量模型。
- * 环境变量留给纯部署场景,不再要求普通用户改文件。
- */
+/** 向量模型只看当前账号设置页的绑定;未绑定则 RAG 自动退回 BM25。 */
 export async function resolveEmbeddingTarget(ownerId: string): Promise<ResolvedEmbeddingTarget | null> {
   const settings = await readStored(ownerId);
   const binding = settings?.embedding;
@@ -199,16 +177,6 @@ export async function resolveEmbeddingTarget(ownerId: string): Promise<ResolvedE
       };
     }
   }
-
-  if (serverConfig.embedding.enabled && serverConfig.embedding.apiKey && serverConfig.embedding.baseUrl && serverConfig.embedding.model) {
-    return {
-      accountId: "env-embedding",
-      provider: /anthropic/i.test(serverConfig.embedding.baseUrl) ? "anthropic" : "custom",
-      baseUrl: serverConfig.embedding.baseUrl,
-      apiKey: serverConfig.embedding.apiKey,
-      model: serverConfig.embedding.model,
-    };
-  }
   return null;
 }
 
@@ -222,7 +190,7 @@ export async function resolveServiceModel(
     const resolved = await resolveModelById(ownerId, id);
     if (resolved) return resolved;
   }
-  return envTarget();
+  return null;
 }
 
 export async function configuredModelSummary(ownerId: string) {

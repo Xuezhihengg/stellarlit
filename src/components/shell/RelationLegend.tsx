@@ -39,7 +39,7 @@ export function RelationLegend({ payload, dimmedKinds, onToggle }: RelationLegen
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-1.5">
+    <div className="flex flex-wrap items-center justify-end gap-x-1.5 gap-y-1.5">
       {[citation, ...presets.map((p) => ({
         id: p.id,
         label: p.label,

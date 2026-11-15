@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   useEffect,
   useRef,
@@ -17,6 +18,7 @@ import {
 } from "@/hooks/use-ask-history";
 import { askStarfield } from "@/lib/api/client";
 import { formatPaperText, formatPaperTitle } from "@/lib/format";
+import { useStarfieldStore } from "@/stores/starfield-store";
 import type { StarfieldPayload } from "@/types/api";
 import {
   MAX_ASK_IMAGES,
@@ -73,6 +75,8 @@ const SUGGESTIONS = [
  * 这让回答从"模型说的"变成"有出处的"。
  */
 export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) {
+  const capabilities = useStarfieldStore((s) => s.capabilities);
+  const askModelReady = Boolean(capabilities?.askModel);
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<AskSource[]>([]);
@@ -156,7 +160,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
 
   const submit = (text: string) => {
     const q = text.trim();
-    if (!q || busy) return;
+    if (!q || busy || !askModelReady) return;
 
     abortRef.current?.abort();
     const ac = new AbortController();
@@ -328,7 +332,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
 
   /** 文件选择、粘贴、拖拽三条入口最终都汇到这里,统一校验与限流。 */
   const addImages = async (files: File[]) => {
-    if (busy || !files.length) return;
+    if (busy || !files.length || !askModelReady) return;
     const picked = files.filter((file) => file.type.startsWith("image/"));
     if (!picked.length) {
       setImageError("只能添加图片文件");
@@ -414,7 +418,7 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
     Array.from(event.dataTransfer.types).includes("Files");
 
   const onDragOver = (event: DragEvent<HTMLElement>) => {
-    if (!dragHasFiles(event)) return;
+    if (!askModelReady || !dragHasFiles(event)) return;
     event.preventDefault();
     if (!dragging) setDragging(true);
   };
@@ -557,6 +561,26 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
         }}
       />
 
+      {capabilities === null ? (
+        <div className="rounded-lg border border-hair px-2.5 py-2.5 text-[10.5px] text-ink-4">
+          正在读取模型配置…
+        </div>
+      ) : !askModelReady ? (
+        <div className="rounded-lg border border-hair bg-surface/20 px-3 py-3">
+          <p className="text-[11.5px] text-ink">问答还没有绑定模型</p>
+          <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">
+            绑定服务商并选择「问答」模型后即可开始提问。
+          </p>
+          <Link
+            href="/settings"
+            className="mt-2.5 inline-flex items-center gap-1 rounded-md border border-hair-2 px-2 py-1 text-[10px] text-accent transition-colors duration-[var(--dur-fast)] hover:border-accent/35 hover:bg-accent/[0.06]"
+          >
+            去设置页绑定服务商
+            <span aria-hidden="true">→</span>
+          </Link>
+        </div>
+      ) : (
+        <>
       {/* 只留缩略图:文件名和"将随问题发送"对用户没有信息量,反而把输入区撑高 */}
       {images.length ? (
         <ul className="mb-2 flex flex-wrap gap-1.5">
@@ -684,6 +708,8 @@ export function AskPanel({ payload, onFocusSource, onAddPaper }: AskPanelProps) 
           ))}
         </div>
       ) : null}
+        </>
+      )}
 
       {error ? (
         <p className="mt-2 text-[11px] leading-relaxed text-alert">{error}</p>

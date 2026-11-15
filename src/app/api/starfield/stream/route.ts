@@ -9,6 +9,7 @@ import { UpstreamError } from "@/server/http";
 import { growStarfieldStream } from "@/server/starfield/grow";
 import { RelationPresetSchema } from "@/server/relations/schema";
 import { MAX_RELATION_PRESETS } from "@/lib/presets/custom";
+import { resolveSourceContext } from "@/server/source-settings";
 
 /**
  * 流式构建。
@@ -71,11 +72,16 @@ export async function POST(req: Request): Promise<Response> {
   }
 
   const encoder = new TextEncoder();
-  const input: GrowRequest & { depth?: number; ownerId: string } = {
+  const input: GrowRequest & {
+    depth?: number;
+    ownerId: string;
+    source: Awaited<ReturnType<typeof resolveSourceContext>>;
+  } = {
     ...(parsed.data.presets?.length
       ? parsed.data
       : { ...parsed.data, presets: (await readPresetOverrides(auth.user.id)) ?? undefined }),
     ownerId: auth.user.id,
+    source: await resolveSourceContext(auth.user.id),
   };
 
   const stream = new ReadableStream<Uint8Array>({

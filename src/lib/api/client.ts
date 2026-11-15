@@ -19,6 +19,7 @@ import type {
   UsageSnapshotDto,
 } from "@/types/account";
 import type { Graph, GraphLayout, RelationPreset } from "@/types/kg";
+import { mergePresets } from "@/lib/presets/merge";
 import type { McpTokenCreateResult, McpTokenSummary } from "@/types/mcp";
 import type {
   ModelModality,
@@ -39,6 +40,7 @@ import type {
   ImageEvidence,
 } from "@/types/rag";
 import type { Starfield } from "@/types/starfield";
+import type { SourceSettingsDto } from "@/types/source";
 import { navigateWithFade } from "@/lib/navigation/transition";
 
 /** 带可行动提示的错误。界面直接展示 message 与 hint。 */
@@ -100,6 +102,18 @@ export function fetchCapabilities(): Promise<CapabilityReport> {
   return request<CapabilityReport>("/api/capabilities");
 }
 
+export function fetchSourceSettings(): Promise<SourceSettingsDto> {
+  return request<SourceSettingsDto>("/api/source-settings");
+}
+
+/** 空字符串表示清除当前账号的 Semantic Scholar Key。 */
+export function saveSemanticScholarKey(key: string): Promise<SourceSettingsDto> {
+  return request<SourceSettingsDto>("/api/source-settings", {
+    method: "PUT",
+    body: JSON.stringify({ semanticScholarKey: key }),
+  });
+}
+
 /** 内置关系预设 —— 设置页拿它作为「恢复默认」的基准。 */
 export async function fetchPresets(): Promise<RelationPreset[]> {
   const res = await request<{ presets: RelationPreset[] }>("/api/presets");
@@ -121,6 +135,19 @@ export async function savePresetOverrides(presets: RelationPreset[]): Promise<vo
 
 export async function clearPresetOverridesRemote(): Promise<void> {
   await request<{ ok: boolean }>("/api/presets", { method: "DELETE" });
+}
+
+/**
+ * 当前账号**实际生效**的关系清单:内置 + 这个账号的覆盖/自定义。
+ *
+ * 星图里回显的 `payload.presets` 是「建这张图时的口径」,可能已经过期。
+ * 图例、详情面板要展示的却是「我现在有哪些关系」,所以打开旧星空时用它刷新一次。
+ */
+export async function fetchAccountPresets(): Promise<RelationPreset[]> {
+  const res = await request<{ presets: RelationPreset[]; overrides: RelationPreset[] | null }>(
+    "/api/presets",
+  );
+  return mergePresets(res.presets, res.overrides);
 }
 
 export interface LlmHealth {
@@ -248,7 +275,12 @@ export function growStarfield(req: GrowRequest) {
 
 export interface GrowStreamHandlers {
   /** 结构骨架就绪(通常一秒内) */
-  onStructure: (e: { starfield: Starfield; graph: Graph; layout: GraphLayout }) => void;
+  onStructure: (e: {
+    starfield: Starfield;
+    graph: Graph;
+    layout: GraphLayout;
+    presets: RelationPreset[];
+  }) => void;
   /** 又长出了新论文:整张图的最新快照 */
   onGraph: (e: { graph: Graph; layout: GraphLayout }) => void;
   onProgress: (e: {
@@ -346,7 +378,12 @@ function dispatchEvent(
   switch (event.type) {
     case "structure":
       handlers.onStructure(
-        event as unknown as { starfield: Starfield; graph: Graph; layout: GraphLayout },
+        event as unknown as {
+          starfield: Starfield;
+          graph: Graph;
+          layout: GraphLayout;
+          presets: RelationPreset[];
+        },
       );
       break;
     case "graph":

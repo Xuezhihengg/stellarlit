@@ -123,6 +123,8 @@ function RouteTransitionInner() {
       if (!(anchor instanceof HTMLAnchorElement)) return;
       if (anchor.target && anchor.target !== "_self") return;
       if (anchor.hasAttribute("download")) return;
+      // 自己接管过场动画的入口(如画布顶栏的品牌:回首页由 Workspace 换幕)
+      if (anchor.dataset.skipTransition === "true") return;
 
       const href = anchor.getAttribute("href");
       if (!href || href.startsWith("#")) return;

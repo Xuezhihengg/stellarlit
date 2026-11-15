@@ -17,10 +17,10 @@
  *   - S2 不给作者的机构信息,作者列表也比 OpenAlex 粗糙。
  */
 
-import { serverConfig } from "../config";
 import { fetchJson } from "../http";
 import { formatPaperText } from "@/lib/format";
 import type { OaWork } from "./openalex";
+import type { SourceContext } from "./context";
 
 const S2 = "https://api.semanticscholar.org/graph/v1";
 
@@ -93,30 +93,40 @@ function toWork(p: S2Paper, citedWorks: string[] = []): OaWork {
   };
 }
 
-const auth = (): Record<string, string> =>
-  serverConfig.semanticScholarKey ? { "x-api-key": serverConfig.semanticScholarKey } : {};
+const auth = (source?: SourceContext): Record<string, string> =>
+  source?.semanticScholarKey ? { "x-api-key": source.semanticScholarKey } : {};
 
-async function getJson<T>(url: string): Promise<T> {
+async function getJson<T>(url: string, source?: SourceContext): Promise<T> {
   return fetchJson<T>(url, {
-    headers: auth(),
+    headers: auth(source),
     // S2 的匿名额度对突发很敏感:1 秒 1 次是官方给的量级,这里留出余量
     minIntervalMs: 1200,
     retries: 1,
   });
 }
 
-export async function s2ByArxiv(arxivId: string): Promise<S2Paper | null> {
+export async function s2ByArxiv(
+  arxivId: string,
+  source?: SourceContext,
+): Promise<S2Paper | null> {
   try {
-    return await getJson<S2Paper>(`${S2}/${encodeURIComponent(`ARXIV:${arxivId}`)}?fields=${PAPER_FIELDS}`);
+    return await getJson<S2Paper>(
+      `${S2}/${encodeURIComponent(`ARXIV:${arxivId}`)}?fields=${PAPER_FIELDS}`,
+      source,
+    );
   } catch {
     return null;
   }
 }
 
-export async function s2Search(title: string, limit = 8): Promise<S2Paper[]> {
+export async function s2Search(
+  title: string,
+  limit = 8,
+  source?: SourceContext,
+): Promise<S2Paper[]> {
   try {
     const url = `${S2}/paper/search?query=${encodeURIComponent(title)}&limit=${limit}&fields=${PAPER_FIELDS}`;
-    return (await getJson<S2ListResponse>(url)).data ?? [];
+    return (await getJson<S2ListResponse>(url, source)).data ?? [];
   } catch {
     return [];
   }
@@ -139,7 +149,11 @@ export interface S2Neighborhood {
  *   - 每个引用者记下"它引用了种子"(向前)
  * 这两条都是构造事实,不是猜测。
  */
-export async function s2Neighborhood(paperId: string, pool: number): Promise<S2Neighborhood | null> {
+export async function s2Neighborhood(
+  paperId: string,
+  pool: number,
+  source?: SourceContext,
+): Promise<S2Neighborhood | null> {
   const id = paperId.startsWith("ARXIV:") ? paperId : `S2:${paperId}`;
   const nested = [
     "paperId",
@@ -158,6 +172,7 @@ export async function s2Neighborhood(paperId: string, pool: number): Promise<S2N
   try {
     raw = await getJson<S2Paper & S2NeighborhoodResponse>(
       `${S2}/paper/${encodeURIComponent(id)}?fields=${PAPER_FIELDS},${nested}&limit=${Math.min(500, pool)}`,
+      source,
     );
   } catch {
     return null;

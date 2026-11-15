@@ -20,6 +20,7 @@ import type { SeedCandidate } from "@/types/starfield";
 
 import { retrieveSourcesDetailed } from "../rag/retrieve";
 import { resolveSeed } from "../seed/resolve";
+import { resolveSourceContext } from "../source-settings";
 import { loadStarfield, listStarfields } from "../starfield/store";
 import { getCitingWorks, getWorkById, getWorksByIds, searchWorks } from "../sources/openalex";
 import type { OaWork } from "../sources/openalex";
@@ -212,16 +213,17 @@ export function registerStarfieldTools(server: McpServer, ownerId: string): void
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ paperId }) => {
+      const source = await resolveSourceContext(await owner());
       let candidates;
       try {
-        candidates = await resolveSeed(paperId);
+        candidates = await resolveSeed(paperId, new Set(), source);
       } catch {
         return fail("查询 OpenAlex 失败,可能是网络问题。稍后重试。");
       }
       const best = candidates[0];
       if (!best) return fail(`没有找到与「${paperId}」匹配的论文。换一个标题或直接用 DOI。`);
 
-      const work = await getWorkById(shortId(best.id)).catch(() => null);
+      const work = await getWorkById(shortId(best.id), source).catch(() => null);
       return ok({
         ...(work ? workBrief(work) : candidateBrief(best)),
         abstract: work?.abstract ? clip(formatPaperText(work.abstract), 900) : undefined,
@@ -250,18 +252,19 @@ export function registerStarfieldTools(server: McpServer, ownerId: string): void
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ paperId, direction = "both", limit = 12 }) => {
+      const source = await resolveSourceContext(await owner());
       const id = shortId(paperId);
-      const work = await getWorkById(id).catch(() => null);
+      const work = await getWorkById(id, source).catch(() => null);
       if (!work) return fail(`OpenAlex 里没有 ${paperId}。先用 get_paper 确认 id。`);
 
       const neighbors: Array<Record<string, unknown>> = [];
       try {
         if (direction !== "forward" && work.referencedWorks.length) {
-          const refs = await getWorksByIds(work.referencedWorks.slice(0, limit));
+          const refs = await getWorksByIds(work.referencedWorks.slice(0, limit), source);
           neighbors.push(...refs.map((ref) => ({ ...workBrief(ref), relation: "参考文献" })));
         }
         if (direction !== "backward") {
-          const citing = await getCitingWorks(work.id, limit);
+          const citing = await getCitingWorks(work.id, limit, source);
           neighbors.push(...citing.map((item) => ({ ...workBrief(item), relation: "引用本文" })));
         }
       } catch {
@@ -443,8 +446,9 @@ export function registerStarfieldTools(server: McpServer, ownerId: string): void
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ query }) => {
+      const source = await resolveSourceContext(await owner());
       try {
-        const candidates = await resolveSeed(query);
+        const candidates = await resolveSeed(query, new Set(), source);
         if (!candidates.length) {
           return ok({ query, candidates: [], hint: "没有匹配。换更完整的标题,或改用 DOI。" });
         }
@@ -482,8 +486,12 @@ export function registerStarfieldTools(server: McpServer, ownerId: string): void
       annotations: { readOnlyHint: true, openWorldHint: true },
     },
     async ({ query, fromYear, toYear, limit = 8 }) => {
+      const source = await resolveSourceContext(await owner());
       try {
-        const works = await searchWorks({ query, fromYear, toYear, limit: limit * 3 });
+        const works = await searchWorks(
+          { query, fromYear, toYear, limit: limit * 3 },
+          source,
+        );
         const picked = works
           .sort((a, b) => b.citedByCount - a.citedByCount)
           .slice(0, limit)

@@ -13,9 +13,11 @@ import {
   fetchMcpTokens,
   fetchProviderModels,
   fetchPresets,
+  fetchSourceSettings,
   getModelSettings,
   probeProvider,
   revokeMcpToken,
+  saveSemanticScholarKey,
   saveModelSettings,
   savePresetOverrides as savePresetOverridesRemote,
   type ProviderModelsResponse,
@@ -47,6 +49,7 @@ import type {
   ModelSettingsDto,
   ProviderAccountDto,
 } from "@/types/model-settings";
+import type { SourceSettingsDto } from "@/types/source";
 
 /**
  * 设置。
@@ -64,7 +67,9 @@ export default function SettingsPage() {
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [presetError, setPresetError] = useState<string | null>(null);
   const [presetSaving, setPresetSaving] = useState(false);
-  const [activeSection, setActiveSection] = useState<"models" | "relations" | "mcp">("models");
+  const [activeSection, setActiveSection] = useState<
+    "models" | "sources" | "relations" | "mcp"
+  >("models");
 
   useEffect(() => {
     void (async () => {
@@ -91,20 +96,6 @@ export default function SettingsPage() {
     setPresetError(null);
   }, []);
 
-  const addPreset = useCallback((preset: RelationPreset) => {
-    setPresets((prev) => (prev ? [...prev, preset] : [preset]));
-    setDirty(true);
-    setSavedAt(null);
-    setPresetError(null);
-  }, []);
-
-  const removePreset = useCallback((id: string) => {
-    setPresets((prev) => (prev ? prev.filter((preset) => preset.id !== id) : prev));
-    setDirty(true);
-    setSavedAt(null);
-    setPresetError(null);
-  }, []);
-
   /**
    * 保存。
    *
@@ -112,24 +103,26 @@ export default function SettingsPage() {
    * 「这条边是哪个版本的提示词判出来的」。让用户自己记得改版本号是不现实的,
    * 而忘了改的后果是事后无法区分两次判定的来源。
    */
-  const save = useCallback(async () => {
+  const save = useCallback(async (draftList?: RelationPreset[]) => {
     if (presetSaving) return;
-    if (!presets) return;
-    if (presets.length > MAX_RELATION_PRESETS) {
+    const source = draftList ?? presets;
+    if (!source) return;
+    if (source.length > MAX_RELATION_PRESETS) {
       setPresetError(`最多只能有 ${MAX_RELATION_PRESETS} 条关系`);
       return;
     }
-    const invalid = presets.find(
+    const invalid = source.find(
       (preset) => !preset.definition.trim() || !preset.negativeExamples.trim(),
     );
     if (invalid) {
       setPresetError(`「${invalid.label}」的判定标准与反例不能为空`);
+      setDirty(true);
       return;
     }
     const seenIds = new Set<string>();
     const seenLabels = new Set<string>();
     const seenLabelEns = new Set<string>();
-    const duplicate = presets.find((preset) => {
+    const duplicate = source.find((preset) => {
       const label = preset.label.trim().toLowerCase();
       const labelEn = preset.labelEn.trim().toLowerCase();
       if (seenIds.has(preset.id) || seenLabels.has(label) || seenLabelEns.has(labelEn)) return true;
@@ -140,11 +133,12 @@ export default function SettingsPage() {
     });
     if (duplicate) {
       setPresetError(`「${duplicate.label}」的名称或 id 与另一条关系重复`);
+      setDirty(true);
       return;
     }
     setPresetError(null);
     const previousById = new Map(savedPresets.map((p) => [p.id, p]));
-    const next = presets.map((p) => {
+    const next = source.map((p) => {
       const base = previousById.get(p.id);
       const rubricChanged =
         base && (base.definition !== p.definition || base.negativeExamples !== p.negativeExamples);
@@ -161,6 +155,8 @@ export default function SettingsPage() {
       setPresetError(
         error instanceof Error ? error.message : "服务端保存失败,请检查网络后重试",
       );
+      // 自动保存失败时草稿还留在本地:必须重新标成"未保存",否则用户会以为已生效
+      setDirty(true);
       return;
     } finally {
       setPresetSaving(false);
@@ -170,6 +166,37 @@ export default function SettingsPage() {
     setDirty(false);
     setSavedAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }));
   }, [presetSaving, presets, savedPresets]);
+
+  /**
+   * 新增与删除是**离散动作**,直接落库。
+   *
+   * 早先这两步只改本地状态,要用户再点右上角的「保存」才生效 —— 结果是
+   * 加完关系就去建星空,服务端一条自定义规则都没有,右下角图例里也看不到它。
+   * 文字改动仍然走手动保存(那是连续输入,不适合每敲一个字就发请求)。
+   */
+  const addPreset = useCallback(
+    (preset: RelationPreset) => {
+      const next = [...(presets ?? []), preset];
+      setPresets(next);
+      setDirty(!presetSaving);
+      setSavedAt(null);
+      setPresetError(null);
+      void save(next);
+    },
+    [presets, presetSaving, save],
+  );
+
+  const removePreset = useCallback(
+    (id: string) => {
+      const next = (presets ?? []).filter((preset) => preset.id !== id);
+      setPresets(next);
+      setDirty(!presetSaving);
+      setSavedAt(null);
+      setPresetError(null);
+      void save(next);
+    },
+    [presets, presetSaving, save],
+  );
 
   const resetAll = useCallback(async () => {
     setPresetSaving(true);
@@ -219,6 +246,7 @@ export default function SettingsPage() {
         <aside className="flex flex-row flex-wrap gap-1 border-b border-hair pb-4 lg:sticky lg:top-8 lg:flex-col lg:border-b-0 lg:border-r lg:pb-0 lg:pr-5">
           {[
             ["models", "模型服务"],
+            ["sources", "文献数据源"],
             ["relations", "关系判定"],
             ["mcp", "MCP 工具"],
           ].map(([id, label]) => {
@@ -227,7 +255,9 @@ export default function SettingsPage() {
               <button
                 key={id}
                 type="button"
-                onClick={() => setActiveSection(id as "models" | "relations" | "mcp")}
+                onClick={() =>
+                  setActiveSection(id as "models" | "sources" | "relations" | "mcp")
+                }
                 className={`rounded-lg px-3 py-2.5 text-left transition-colors duration-[var(--dur-fast)] ${
                   active ? "bg-hair/50 text-ink" : "text-ink-3 hover:bg-hair/25"
                 }`}
@@ -243,6 +273,8 @@ export default function SettingsPage() {
             <ModelSection />
           ) : null}
 
+          {activeSection === "sources" ? <SourceSection /> : null}
+
           {activeSection === "relations" ? (
             <section>
               <SectionHead
@@ -256,9 +288,38 @@ export default function SettingsPage() {
                   {presetError ? (
                     <p className="mb-3 text-[11px] text-warm">{presetError}</p>
                   ) : null}
+                  {dirty ? (
+                    <div className="preset-dirty-bar mb-3 flex flex-wrap items-center justify-between gap-2.5 rounded-lg border border-accent/25 bg-bg/80 px-3.5 py-2">
+                      <p className="text-[11px] leading-relaxed text-ink-3">
+                        改动还没生效 —— 判定标准与反例需要保存后,才会用于下一次构建。
+                      </p>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <GhostButton
+                          size="sm"
+                          onClick={() => {
+                            setPresets(savedPresets);
+                            setDirty(false);
+                            setPresetError(null);
+                          }}
+                          disabled={presetSaving}
+                        >
+                          放弃
+                        </GhostButton>
+                        <GhostButton
+                          size="sm"
+                          active
+                          onClick={() => void save()}
+                          disabled={presetSaving}
+                        >
+                          {presetSaving ? "保存中…" : "保存"}
+                        </GhostButton>
+                      </div>
+                    </div>
+                  ) : null}
                   <RelationStudio
                     presets={presets}
                     baseline={baseline}
+                    busy={presetSaving}
                     onChange={update}
                     onReset={resetOne}
                     onAdd={addPreset}
@@ -1176,6 +1237,7 @@ function presetSignature(preset: RelationPreset): string {
 function RelationStudio({
   presets,
   baseline,
+  busy,
   onChange,
   onReset,
   onAdd,
@@ -1183,6 +1245,8 @@ function RelationStudio({
 }: {
   presets: RelationPreset[];
   baseline: RelationPreset[];
+  /** 正在保存:新增/删除会写库,期间必须禁用,否则第二次点击会被静默丢弃 */
+  busy: boolean;
   onChange: (id: string, patch: Partial<RelationPreset>) => void;
   onReset: (id: string) => void;
   onAdd: (preset: RelationPreset) => void;
@@ -1262,9 +1326,11 @@ function RelationStudio({
             size="sm"
             shape="rect"
             onClick={openCreate}
-            disabled={presets.length >= MAX_RELATION_PRESETS}
+            disabled={busy || presets.length >= MAX_RELATION_PRESETS}
             title={
-              presets.length >= MAX_RELATION_PRESETS
+              busy
+                ? "正在保存,请稍候"
+                : presets.length >= MAX_RELATION_PRESETS
                 ? `最多 ${MAX_RELATION_PRESETS} 条关系`
                 : "新建一条由你定义的关系"
             }
@@ -1335,6 +1401,7 @@ function RelationStudio({
           <RelationDetail
             preset={selected}
             changed={changed}
+            busy={busy}
             onChange={(patch) => onChange(selected.id, patch)}
             onReset={() => onReset(selected.id)}
             onRemove={() => onRemove(selected.id)}
@@ -1464,8 +1531,8 @@ function RelationStudio({
           <GhostButton size="sm" shape="rect" onClick={() => setCreateOpen(false)}>
             取消
           </GhostButton>
-          <GhostButton size="sm" shape="rect" active onClick={create}>
-            创建关系
+          <GhostButton size="sm" shape="rect" active onClick={create} disabled={busy}>
+            {busy ? "保存中…" : "创建关系"}
           </GhostButton>
         </div>
       </Modal>
@@ -1522,12 +1589,14 @@ function RelationGlyph({ preset }: { preset: RelationPreset }) {
 function RelationDetail({
   preset,
   changed,
+  busy,
   onChange,
   onReset,
   onRemove,
 }: {
   preset: RelationPreset;
   changed: boolean;
+  busy: boolean;
   onChange: (patch: Partial<RelationPreset>) => void;
   onReset: () => void;
   onRemove: () => void;
@@ -1779,7 +1848,8 @@ function RelationDetail({
               <button
                 type="button"
                 onClick={onRemove}
-                className="rounded-md border border-alert/45 px-3 py-[5px] text-[11px] text-alert transition-colors duration-[var(--dur-fast)] hover:border-alert/75"
+                disabled={busy}
+                className="rounded-md border border-alert/45 px-3 py-[5px] text-[11px] text-alert transition-colors duration-[var(--dur-fast)] hover:border-alert/75 disabled:opacity-50"
               >
                 确认删除
               </button>
@@ -1788,7 +1858,8 @@ function RelationDetail({
             <button
               type="button"
               onClick={() => setConfirmRemove(true)}
-              className="rounded-md border border-alert/35 px-3 py-[5px] text-[11px] text-alert transition-colors duration-[var(--dur-fast)] hover:border-alert/70"
+              disabled={busy}
+              className="rounded-md border border-alert/35 px-3 py-[5px] text-[11px] text-alert transition-colors duration-[var(--dur-fast)] hover:border-alert/70 disabled:opacity-50"
             >
               删除关系
             </button>
@@ -2475,6 +2546,128 @@ function ModelPicker({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function SourceSection() {
+  const [settings, setSettings] = useState<SourceSettingsDto | null>(null);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSourceSettings()
+      .then((next) => {
+        if (!cancelled) setSettings(next);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : "读取数据源设置失败");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async (value: string) => {
+    if (saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const next = await saveSemanticScholarKey(value);
+      setSettings(next);
+      setKeyDraft("");
+      setSavedAt(
+        new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }),
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "保存失败");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <section className="flex flex-col gap-4">
+      <SectionHead title="文献数据源" note="元数据按当前账号身份调用" />
+
+      <div className="rounded-xl border border-hair px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-[13px] text-ink">OpenAlex</h3>
+            <p className="mt-1 text-[10.5px] leading-relaxed text-ink-4">
+              使用当前账号的注册邮箱进入礼貌池,无需额外密钥。
+            </p>
+          </div>
+          <span className="max-w-full truncate rounded-md border border-hair-2 bg-bg/30 px-2 py-1 font-mono text-[10px] text-ink-3">
+            {settings?.openalexMailto ?? "读取中…"}
+          </span>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-hair px-5 py-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-[13px] text-ink">Semantic Scholar</h3>
+            <p className="mt-1 max-w-[460px] text-[10.5px] leading-relaxed text-ink-4">
+              可选。填写自己的 API Key 后,备用检索按你的额度调用;不填则匿名访问。
+            </p>
+          </div>
+          {settings?.hasSemanticScholarKey ? (
+            <span className="font-mono text-[10px] text-accent">
+              {settings.semanticScholarKeyHint} 已保存
+            </span>
+          ) : (
+            <span className="font-mono text-[10px] text-ink-4">未配置</span>
+          )}
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+          <input
+            type="password"
+            value={keyDraft}
+            onChange={(e) => setKeyDraft(e.target.value)}
+            placeholder={
+              settings?.hasSemanticScholarKey
+                ? "输入新 Key 可替换"
+                : "粘贴 Semantic Scholar API Key"
+            }
+            autoComplete="off"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-hair-2 bg-bg/40 px-2.5 font-mono text-[11px] text-ink outline-none transition-colors duration-[var(--dur-fast)] placeholder:text-ink-4/70 focus:border-accent/45"
+          />
+          <div className="flex gap-2">
+            <GhostButton
+              size="sm"
+              onClick={() => void save(keyDraft)}
+              disabled={!keyDraft.trim() || saving}
+            >
+              {saving ? "保存中…" : "保存"}
+            </GhostButton>
+            {settings?.hasSemanticScholarKey ? (
+              <GhostButton size="sm" onClick={() => void save("")} disabled={saving}>
+                清除
+              </GhostButton>
+            ) : null}
+          </div>
+        </div>
+
+        <p className="mt-2 text-[9.5px] leading-relaxed text-ink-4">
+          可在{" "}
+          <a
+            href="https://www.semanticscholar.org/product/api"
+            target="_blank"
+            rel="noreferrer"
+            className="text-accent transition-opacity hover:opacity-80"
+          >
+            Semantic Scholar
+          </a>{" "}
+          申请 API Key;密钥加密后保存,只对当前账号生效。
+        </p>
+        {error ? <p className="mt-2 text-[10.5px] text-alert">{error}</p> : null}
+        {savedAt && !error ? <p className="mt-2 text-[10px] text-accent">{savedAt} 已保存</p> : null}
+      </div>
+    </section>
   );
 }
 

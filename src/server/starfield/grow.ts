@@ -22,6 +22,7 @@ import { BUILTIN_PRESETS } from "../relations/presets";
 import { getCitingWorks, getWorkById, getWorksByIds, type OaWork } from "../sources/openalex";
 import { s2Neighborhood } from "../sources/semantic-scholar";
 import { assessQuality, emptyQualitySummary, recordQuality } from "../sources/quality";
+import type { SourceContext } from "../sources/context";
 import { loadStarfield, saveStarfield } from "./store";
 
 /**
@@ -76,7 +77,11 @@ export interface Neighborhood {
   forward: OaWork[];
 }
 
-async function neighborhoodOf(seedId: string, pool: number): Promise<Neighborhood | null> {
+async function neighborhoodOf(
+  seedId: string,
+  pool: number,
+  source?: SourceContext,
+): Promise<Neighborhood | null> {
   return cached("neighborhood", `${seedId}-p${pool}`, async () => {
     /**
      * 主源失败时切到 Semantic Scholar。
@@ -86,28 +91,32 @@ async function neighborhoodOf(seedId: string, pool: number): Promise<Neighborhoo
      * 一次建图之内保持一致。
      */
     try {
-      return await openAlexNeighborhood(seedId, pool);
+      return await openAlexNeighborhood(seedId, pool, source);
     } catch (e) {
-      const fallback = await s2Neighborhood(seedId, pool);
+      const fallback = await s2Neighborhood(seedId, pool, source);
       if (!fallback) throw e;
       return { seedId, ...fallback } satisfies Neighborhood;
     }
   });
 }
 
-async function openAlexNeighborhood(seedId: string, pool: number): Promise<Neighborhood | null> {
+async function openAlexNeighborhood(
+  seedId: string,
+  pool: number,
+  source?: SourceContext,
+): Promise<Neighborhood | null> {
   {
-    const seed = await getWorkById(seedId);
+    const seed = await getWorkById(seedId, source);
     if (!seed) return null;
 
     // 向后:它引用了谁(取它自己记录的 references)
     const backwardIds = seed.referencedWorks.slice(0, pool);
-    const backward = backwardIds.length ? await getWorksByIds(backwardIds) : [];
+    const backward = backwardIds.length ? await getWorksByIds(backwardIds, source) : [];
 
     // 向前:谁引用了它。按被引量降序 —— 高被引的引用者才是主干。
     let forward: OaWork[] = [];
     try {
-      forward = await getCitingWorks(seedId, pool);
+      forward = await getCitingWorks(seedId, pool, source);
     } catch {
       // 向前引用失败不应该让整次构建失败:向后邻域本身已经能构成一张合法的星图
       forward = [];
@@ -252,6 +261,8 @@ function starfieldId(seedIds: string[]): string {
 export interface GrowOptions {
   /** 数据归属:由会话解析后传入;脚本与测试可省略,落到 legacy */
   ownerId?: string;
+  /** 文献源身份:登录邮箱 + 用户自己的 Semantic Scholar Key。 */
+  source?: SourceContext;
   starfieldId?: string;
   seedPaperId: string;
   name?: string;
@@ -354,7 +365,7 @@ async function* growStarfieldStream(opts: GrowOptions): AsyncGenerator<GrowEvent
   const neighborhoods: Neighborhood[] = [];
   const merged = new Map<string, OaWork>();
   for (const id of allSeedIds) {
-    const n = await neighborhoodOf(id, poolSize);
+    const n = await neighborhoodOf(id, poolSize, opts.source);
     if (!n) continue;
     neighborhoods.push(n);
     for (const w of [n.seed, ...n.backward, ...n.forward]) {

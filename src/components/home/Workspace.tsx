@@ -6,6 +6,7 @@ import { HomeView } from "@/components/home/HomeView";
 import { StarfieldCanvasView } from "@/components/shell/StarfieldCanvasView";
 import { useTheme } from "@/hooks/use-theme";
 import { useSession } from "@/hooks/use-session";
+import { HOME_EVENT } from "@/lib/navigation/transition";
 import { useStarfieldStore } from "@/stores/starfield-store";
 
 type View = "home" | "to-canvas" | "canvas" | "to-home";
@@ -181,6 +182,26 @@ export function Workspace({ initialStarfieldId, initialSeed, autoStart }: Worksp
       }
     }, EXIT_MS);
   }, [after, burstWarp, cleanUrl, clearTimers, reset]);
+
+  /**
+   * 顶栏品牌等处的「回首页」请求。
+   *
+   * 不能靠路由跳转:`/` 与 `/?starfield=…` 是同一个 Workspace 实例,
+   * push 过去只会换查询串,画布照样在场。这里截下意图,交给同一套换幕动画。
+   */
+  useEffect(() => {
+    const onHome = (event: Event) => {
+      event.preventDefault();
+      if (view === "home") {
+        cleanUrl();
+        return;
+      }
+      if (view === "to-home") return;
+      goHome();
+    };
+    window.addEventListener(HOME_EVENT, onHome);
+    return () => window.removeEventListener(HOME_EVENT, onHome);
+  }, [cleanUrl, goHome, view]);
 
   return (
     <main className="relative h-dvh w-screen overflow-hidden bg-bg">

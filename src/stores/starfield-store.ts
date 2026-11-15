@@ -4,6 +4,7 @@ import { create } from "zustand";
 
 import {
   ApiRequestError,
+  fetchAccountPresets,
   fetchCapabilities,
   getStarfield,
   growStarfieldStream,
@@ -171,7 +172,20 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
     try {
       const payload = await getStarfield(id);
       if (!isCurrentFlow(flow)) return;
-      set({ payload, phase: "ready", selectedId: null, candidates: [], minYear: null });
+      /**
+       * 图例要回答的是「我现在有哪些关系」,而不是「这张图当初用哪些关系建的」。
+       * 存量的 payload.presets 是快照:后来新加的自定义关系不在里面,
+       * 打开旧星空时就看不到它。这里补一次账号级刷新,失败就按快照展示。
+       */
+      const presets = await fetchAccountPresets().catch(() => payload.presets);
+      if (!isCurrentFlow(flow)) return;
+      set({
+        payload: { ...payload, presets },
+        phase: "ready",
+        selectedId: null,
+        candidates: [],
+        minYear: null,
+      });
     } catch (e) {
       if (!isCurrentFlow(flow)) return;
       set({ error: toError(e), phase: "idle" });
@@ -224,14 +238,21 @@ export const useStarfieldStore = create<StarfieldState>((set, get) => ({
         name,
       },
       {
-        onStructure: ({ starfield, graph, layout }) => {
+        /**
+         * 结构快照自带服务端本次实际使用的 `presets`。
+         *
+         * 以前这里沿用上一份 payload 的预设:新建星空时是空的(图例只剩引用),
+         * 往旧星空里并入新关系时又会继承旧清单 —— 自定义关系在流式阶段没有名字,
+         * 详情面板里只能显示 `CUSTOM_XXX`。服务端既然已经算好了,就直接用它的。
+         */
+        onStructure: ({ starfield, graph, layout, presets }) => {
           if (!isCurrentFlow(flow)) return;
           set({
             payload: {
               starfield,
               graph,
               layout,
-              presets: get().payload?.presets ?? [],
+              presets,
               meta: provisionalMeta(started),
             },
           });

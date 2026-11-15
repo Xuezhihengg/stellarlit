@@ -234,6 +234,21 @@ const MIGRATIONS: Array<{ version: number; name: string; sql: string }> = [
       ALTER TABLE starfields DROP COLUMN IF EXISTS preview;
     `,
   },
+  {
+    version: 7,
+    name: "source-credentials",
+    sql: `
+      -- 文献数据源凭据按账号隔离。OpenAlex 的邮箱直接取 users.email;
+      -- 这里存需要用户自己申请的第三方密钥(目前是 Semantic Scholar)。
+      CREATE TABLE source_credentials (
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        source TEXT NOT NULL,
+        api_key TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (owner_id, source)
+      );
+    `,
+  },
 ];
 
 async function runMigrations(): Promise<void> {

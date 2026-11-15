@@ -10,6 +10,7 @@ import { UpstreamError } from "@/server/http";
 import { growStarfield } from "@/server/starfield/grow";
 import { RelationPresetSchema } from "@/server/relations/schema";
 import { MAX_RELATION_PRESETS } from "@/lib/presets/custom";
+import { resolveSourceContext } from "@/server/source-settings";
 
 /**
  * 构建星空是最重的操作:要抓取邻域、跑社区检测与布局,还可能调用大模型判定关系。
@@ -68,7 +69,11 @@ export async function POST(req: Request): Promise<Response> {
     const input = parsed.data.presets?.length
       ? parsed.data
       : { ...parsed.data, presets: (await readPresetOverrides(auth.user.id)) ?? undefined };
-    const payload = await growStarfield({ ...input, ownerId: auth.user.id });
+    const payload = await growStarfield({
+      ...input,
+      ownerId: auth.user.id,
+      source: await resolveSourceContext(auth.user.id),
+    });
     return NextResponse.json(payload);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

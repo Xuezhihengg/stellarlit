@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { z } from "zod";
 
+import { closePool, queryOne } from "../src/server/db";
 import { chatJson, llmAvailable } from "@/server/llm/client";
 import {
   generatePairs,
@@ -58,7 +59,17 @@ const seedRelated = eligible.filter((f) => {
   return Boolean(a && b && (a.id === seedId || b.id === seedId));
 });
 
-const hasLlm = await llmAvailable("relation");
+const ownerId =
+  process.env.STELLARLIT_OWNER_ID?.trim() ||
+  (await queryOne<{ id: string }>(
+    "SELECT id FROM users ORDER BY created_at ASC, id ASC LIMIT 1",
+  ))?.id;
+if (!ownerId) {
+  console.error("没有可用账号:先注册一个账号,或设置 STELLARLIT_OWNER_ID。");
+  process.exit(1);
+}
+
+const hasLlm = await llmAvailable(ownerId, "relation");
 console.log(`预设 ${preset.id} · 硬约束候选 ${eligible.length} 条,其中涉及种子 ${seedRelated.length} 条`);
 console.log(`大模型可用:${hasLlm}\n`);
 
@@ -81,12 +92,13 @@ for (const { f, s } of ranked) {
   console.log(`B ${b.id} ${b.year} ${b.title.slice(0, 60)}`);
 
   if (!hasLlm) {
-    console.log("(没有模型密钥,只能看到候选;配置 LLM_API_KEY 后可看到模型判定)\n");
+    console.log("(当前账号未绑定关系判定模型,只能看到候选;先在设置页绑定服务商)\n");
     continue;
   }
 
   const result = await chatJson(
     {
+      ownerId,
       system: judgeSystem(preset.evidencePolicy),
       user: pairPrompt(f, a, b, preset),
       temperature: 0.05,
@@ -98,3 +110,5 @@ for (const { f, s } of ranked) {
   console.log(result ? result.raw : "(调用失败或输出无法解析)");
   console.log();
 }
+
+await closePool();

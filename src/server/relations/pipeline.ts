@@ -898,6 +898,8 @@ export async function buildSemanticEdges(
     if (mode === "heuristic") {
       for (const item of chunk) {
         for (const preset of item.eligible) {
+          // 没模型时「判定」这一列不能恒为 0:候选是算过的,只是算的人是本地启发式
+          report.perPreset[preset.id]!.judged++;
           const score = item.scoreByPreset.get(preset.id) ?? 0;
           const quotaKey = quotaKeyOf(preset, item, seedSet);
           if (report.perPreset[preset.id]!.matched >= preset.maxPerSeed) continue;

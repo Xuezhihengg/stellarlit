@@ -38,7 +38,20 @@ export function BottomBar({
       className="pointer-events-none fixed bottom-0 left-0 z-30 pb-8 pl-10"
       style={{ right: rightInset, transition: "right var(--dur-slow) var(--ease-out)" }}
     >
-      <div className="flex items-end justify-between gap-8">
+      {/*
+        窄窗口下时间轴与图例互相让位,分三层退:
+
+          ① 图例给自己留 16rem 的宽度底线。够就与时间轴并排,
+             但只占「剩下的那些」—— 于是它永远不会向左滑到时间轴上方。
+          ② 剩得不够 16rem,整块图例换到时间轴上方一行(`flex-wrap-reverse`
+             让时间轴仍贴底),在整行宽度里重新排。
+          ③ 容器连时间轴本身都放不下时,时间轴按百分比压缩(见 Timeline),
+             压到一格不足 38px 就把年份藏起来,绝不再钻到侧栏底下。
+
+        早先是 `shrink-0`:空间不够时图例不收缩,整块被顶到右边压进侧栏;
+        而放开收缩之后,它又会一路向左铺满、盖在时间轴上。
+      */}
+      <div className="flex flex-wrap-reverse items-end gap-x-8 gap-y-2.5">
         {/* ---------- 时间轴 ---------- */}
         {/*
           极简轴线。
@@ -52,16 +65,16 @@ export function BottomBar({
           圆点改成短竖线,年份按跨度自动稀疏到不超过 6 个。
           「正在看哪一段」由轴线本身的明暗表达 —— 位置信息,不是文字信息。
 
-          刻度间距固定 52px,所以轴线与高亮段都用**像素**算,
-          不用百分比 —— 百分比会在刻度数变化时对不齐。
+          宽屏下刻度间距 52px;窄屏按百分比等比压缩(见 Timeline),
+          但每个刻度有不低于 40px 的底线 —— 再挤就开始叠字了。
         */}
-        <div className="pointer-events-auto">
+        <div className="pointer-events-auto min-w-0 max-w-full">
           <div className="flex items-end gap-7">
             <button
               type="button"
               onClick={() => onMinYearChange(null)}
               aria-pressed={minYear === null}
-              className={`pb-[7px] text-[10.5px] tracking-[0.16em] transition-colors duration-[var(--dur-fast)] ${
+              className={`shrink-0 pb-[7px] text-[10.5px] tracking-[0.16em] whitespace-nowrap transition-colors duration-[var(--dur-fast)] ${
                 minYear === null ? "text-ink-3 hover:text-ink-2" : "text-accent/80 hover:text-accent"
               }`}
             >
@@ -79,15 +92,16 @@ export function BottomBar({
         </div>
 
         {/* ---------- 图例 = 筛选器 ---------- */}
-        <div className="pointer-events-auto shrink-0">{legend}</div>
+        <div className="pointer-events-auto ml-auto min-w-0 max-w-full basis-64 grow">
+          {legend}
+        </div>
       </div>
     </div>
   );
 }
 
-/** 刻度间距(px)。轴线与高亮段都按它算,保证任何刻度数下都对齐。 */
+/** 宽屏下的刻度间距(px)。窄屏不再固定它:轴按百分比随容器压缩。 */
 const TICK_W = 52;
-const TRACK_INSET = TICK_W / 2;
 
 /**
  * 一条轴线 + 一串刻度。
@@ -110,13 +124,29 @@ function Timeline({
   /** 没选年份时高亮段铺满整条轴、但完全透明:于是它"淡出"之后仍有一个稳定的起点 */
   const rangeStart = hasRange ? firstActive : 0;
 
+  /**
+   * 轴线坐标一律用百分比,不用像素。
+   *
+   * 像素写死之后,窗口一窄这条轴就顶穿容器、钻到侧栏底下 —— 它的宽度
+   * 是 ticks × 52px,而容器宽度还得扣掉左侧留白。改成百分比后,
+   * 轴随容器等比压缩:宽屏下仍是 52px 一格,窄屏下自动变密,永不溢出。
+   */
+  const step = 100 / ticks.length;
+  /** 刻度标签居中在刻度点上,所以轴线两端各让半格 */
+  const inset = step / 2;
+
   return (
-    <div className="relative" style={{ width: ticks.length * TICK_W }}>
+    // 固有宽度给 52px 一格,但允许被压:minWidth 0 让它能收缩,
+    // maxWidth 100% 保证收缩到父容器为止 —— 轴线本身是百分比,跟着一起变密。
+    <div
+      className="relative flex-initial overflow-hidden @container"
+      style={{ width: ticks.length * TICK_W, maxWidth: "100%", minWidth: 0 }}
+    >
       <span
         className="pointer-events-none absolute top-0 h-px bg-hair-2"
         style={{
-          left: TRACK_INSET,
-          right: TRACK_INSET,
+          left: `${inset}%`,
+          right: `${inset}%`,
           // 两端渐隐:硬边的轴线像一条边框,渐隐的才像"时间在延伸"
           maskImage: "linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent)",
         }}
@@ -132,8 +162,8 @@ function Timeline({
       <span
         className="pointer-events-none absolute top-0 h-px bg-accent/55"
         style={{
-          left: TRACK_INSET + rangeStart * TICK_W,
-          width: (lastIndex - rangeStart) * TICK_W,
+          left: `${(rangeStart + 0.5) * step}%`,
+          width: `${(lastIndex - rangeStart) * step}%`,
           opacity: hasRange ? 1 : 0,
           boxShadow: "0 0 7px color-mix(in srgb, var(--accent) 45%, transparent)",
           transition:
@@ -155,8 +185,7 @@ function Timeline({
               title={`只看 ${y} 年及以后`}
               className={`group flex flex-col items-center transition-opacity duration-[var(--dur-fast)] ${
                 excluded ? "opacity-40 hover:opacity-70" : "opacity-100"
-              }`}
-              style={{ width: TICK_W }}
+              } min-w-0 flex-1`}
             >
               {/* 刻度从轴线上垂下来 */}
               <span
@@ -167,7 +196,7 @@ function Timeline({
                 }`}
               />
               <span
-                className={`mt-[7px] font-mono text-[10.5px] tracking-[0.04em] transition-colors duration-[var(--dur-fast)] ${
+                className={`mt-[7px] font-mono text-[10.5px] tracking-[0.04em] whitespace-nowrap transition-colors duration-[var(--dur-fast)] @max-[230px]:hidden ${
                   active ? "text-accent" : "text-ink-3 group-hover:text-ink-2"
                 }`}
               >

@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { checkLimit } from "@/server/safety/limits";
+import { requireUser } from "@/server/auth/require";
 import { z } from "zod";
 
-import type { ApiError, ResolveSeedResponse } from "@/types/api";
+import type { ApiError } from "@/types/api";
 
 import { UpstreamError } from "@/server/http";
 import { resolveSeed } from "@/server/seed/resolve";
+import { resolveSourceContext } from "@/server/source-settings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -15,7 +17,10 @@ const Body = z.object({
   knownPaperIds: z.array(z.string()).max(2000).optional(),
 });
 
-export async function POST(req: Request): Promise<NextResponse<ResolveSeedResponse | ApiError>> {
+export async function POST(req: Request): Promise<Response> {
+  const auth = await requireUser(req);
+  if (!auth.ok) return auth.response;
+
   const limit = checkLimit(req, "resolve");
   if (!limit.ok) {
     return NextResponse.json(
@@ -37,9 +42,11 @@ export async function POST(req: Request): Promise<NextResponse<ResolveSeedRespon
   }
 
   try {
+    const source = await resolveSourceContext(auth.user.id);
     const candidates = await resolveSeed(
       parsed.data.query,
       new Set(parsed.data.knownPaperIds ?? []),
+      source,
     );
     if (!candidates.length) {
       return NextResponse.json(

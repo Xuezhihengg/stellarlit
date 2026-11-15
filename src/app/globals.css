@@ -421,6 +421,21 @@ body::before {
   animation: model-pop var(--dur-quick) var(--ease-out) both;
 }
 
+/* 关系预设的「有未保存改动」提示:只做透明度,不做位移 ——
+   它夹在标题与工作台之间,一旦上下滑动会把下面的内容顶开。 */
+@keyframes preset-dirty-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.preset-dirty-bar {
+  animation: preset-dirty-in var(--dur-base) var(--ease-out) both;
+}
+
 /* 页面切换:旧页淡入幕布,新页从幕布后浮现。
    两者都只改变透明度,不做位移,避免整页内容像被拖动。 */
 @keyframes route-page-in {

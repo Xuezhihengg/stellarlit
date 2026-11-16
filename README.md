@@ -23,6 +23,7 @@
 
 <p align="center">
   <a href="https://stellarlit.wenshi.xin:8443"><strong>在线演示</strong></a> ·
+  <a href="https://www.bilibili.com/video/BV1YVsA6tE7V/">演示视频</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#架构">架构</a> ·
   <a href="docs/架构设计.md">设计文档</a> ·
@@ -63,6 +64,7 @@ StellarLit 是一个面向科研阅读的**关系型文献图谱**。论文是�
 | 项目 | 内容 |
 | --- | --- |
 | 演示地址 | <https://stellarlit.wenshi.xin:8443> |
+| 演示视频 | [Bilibili · StellarLit 作品演示](https://www.bilibili.com/video/BV1YVsA6tE7V/) |
 | 体验账号 | 见完整作品文件 `2026传智杯/Web/【评审必读】在线演示与体验账号.txt` |
 | 可用能力 | 已绑定 DeepSeek Flash（支持视觉），可直接新建星空、检索问答与上传图表提问 |
 

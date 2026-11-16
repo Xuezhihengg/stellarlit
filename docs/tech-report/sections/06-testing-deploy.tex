@@ -1,0 +1,132 @@
+\needspace{5\baselineskip}
+\section{测试与部署}
+
+\subsection{测试策略：直接跑生产代码路径}
+
+项目没有另写一套“测试专用实现”。仓库的 \code{pnpm check} 是一条可重复的验收线，串联 15 项检查：类型、Lint 与 13 组领域自检。领域自检直接导入 \code{src/server} 与 \code{src/lib} 的生产函数，验证检索融合、关系归一化、Agent 停止判定、提示词隔离、MCP 协议、加密往返、缓存与数据库事务。这样做的代价是测试需要真实的依赖（数据库、Redis 或可注入的假实现），收益是“测试通过”与“线上能跑”之间没有第二套逻辑。
+
+测试分四层：静态层（\code{tsc --noEmit}、ESLint 依赖边界）、纯函数层（布局、BM25、RRF、社区检测、文本切块）、领域层（RAG、Agent、安全、关系、MCP、加密、缓存、数据库、账号）、端到端层（Docker 启动、健康检查、演示账号走查）。纯函数层不依赖网络，可以快速回归；领域层允许注入假模型与假数据源，验证失败路径；端到端层只在发布前跑，确认反向代理、SSE 与持久化都正常。
+
+\begin{table}[H]
+  \centering
+  \small
+  \caption{15 项自检的覆盖范围}
+  \label{tab:checks}
+  \footnotesize
+  \begin{tabularx}{\textwidth}{L{3.6cm}L{3.6cm}Y}
+    \toprule
+\textbf{脚本} & \textbf{层次} & \textbf{关键断言} \\
+    \midrule
+    \code{typecheck} & 静态 & TypeScript strict 全量通过；无隐式 \code{any} \\
+    \code{lint} & 静态 & ESLint 规则、依赖单向、可访问性、React Hooks \\
+    \code{check:tokens} & 纯函数 & 设计令牌完整；主题变量可解析 \\
+    \code{check:label} & 纯函数 & 边标签避让、布局不重叠 \\
+    \code{check:rag} & 领域 & BM25/向量融合、RRF 排序、覆盖率与阈值、图扩展 \\
+    \code{check:multimodal} & 领域 & 图像区域归一化、证据块生成、冲突处理 \\
+    \code{check:providers} & 领域 & 多厂商模型列表、密钥解析、错误映射 \\
+    \code{check:relations} & 领域 & 分组、约束自洽、版本号、白名单、去重、空结果 \\
+    \code{check:mcp} & 领域 & 9 个工具注册、只读注解、协议握手 \\
+    \code{check:agent} & 领域 & 规划 schema、工具白名单、覆盖判定、停止码 \\
+    \code{check:safety} & 领域 & 不可见字符、标签转义、注入分级、密钥套取拒绝 \\
+    \code{check:crypto} & 领域 & AES-GCM 往返、随机 IV、篡改检测、密钥轮换 \\
+    \code{check:cache} & 领域 & TTL、版本键、Redis 降级、LRU 淘汰 \\
+    \code{check:db} & 领域 & 迁移、星空 upsert、账号隔离、级联、事务回滚 \\
+    \code{check:auth} & 领域 & 首账号接管、改密、会话、双账号密钥隔离 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{关键测试结果}
+
+仓库当前版本的自检全部通过（README 徽章为 15 passing）。其中加密自检 16 项，覆盖 AES-GCM 往返、随机 IV、篡改检测、密钥轮换与旧明文兼容；数据库自检 59 项，覆盖迁移、星空 upsert、账号隔离、密文落库、模型三表级联、历史裁剪、图片对象引用与事务回滚；账号自检 38 项，额外验证首个账号接管、昵称/改密与“两个账号各自持有不同 API Key”。
+
+关系判定出问题时，可以用探针复现模型实际看到的提示词：\code{pnpm probe baseline 3} 会输出指定关系、指定候选对的完整提示词与模型返回。这个探针不是为了“调参”，而是为了让“模型为什么这样判”可复现——同一份输入、同一版 rubric、同一版提示词，应该得到可解释的结论；如果结论不稳定，问题在提示词或 rubric，而不是“模型今天心情不好”。
+
+\begin{designbox}{测试理念：把“能演示”变成“能重复”}
+比赛演示最怕“只在这台机器上能跑”。项目的自检尽量不依赖演示数据：RAG 用构造的语料验证融合与阈值，Agent 用注入的工具验证停止码，安全用固定样本验证分级。演示数据只用于端到端走查，不用于证明核心逻辑。这样换一台机器、换一个账号，行为仍然一致。
+\end{designbox}
+
+\subsection{部署拓扑}
+
+生产环境只需要 Docker 24+ 与 Compose v2。应用、PostgreSQL、Redis 一起编排；反向代理负责 TLS、真实 IP 与 SSE 不缓冲。应用容器只监听明文 HTTP 3000，公网只开 80/443，3000 绑定 \code{127.0.0.1}，避免被直接扫描。
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[font=\small,>=Latex,
+  box/.style={draw=rule,fill=white,rounded corners=1.4mm,align=center,inner sep=3pt,minimum height=10mm,text width=2.9cm},
+  data/.style={draw=accent!30,fill=soft,rounded corners=1.4mm,align=center,inner sep=3pt,minimum height=10mm,text width=2.9cm},
+  arr/.style={->,thick,accent!65}]
+  \node[box] (client) at (0,0) {浏览器\\HTTPS / SSE};
+  \node[box] (proxy) at (4.2,0) {Caddy / Nginx\\TLS · 真实 IP · 不缓冲};
+  \node[box] (app) at (8.6,0) {Next.js 应用\\:3000};
+  \node[data] (pg) at (12.8,1.5) {PostgreSQL 16\\账号/星空/历史};
+  \node[data] (redis) at (12.8,-1.5) {Redis 7\\TTL/节流};
+  \node[data] (media) at (8.6,-3.0) {data/\\媒体与磁盘缓存};
+
+  \draw[arr] (client) -- (proxy);
+  \draw[arr] (proxy) -- (app);
+  \draw[arr] (app) -- (pg);
+  \draw[arr] (app) -- (redis);
+  \draw[arr] (app) -- (media);
+\end{tikzpicture}
+\caption{部署拓扑：反向代理终止 TLS，应用通过 Compose 内网访问 PostgreSQL、Redis 与数据卷。}
+\label{fig:deploy}
+\end{figure}
+
+\subsection{部署流程}
+
+\begin{enumerate}
+  \item 复制环境模板：\code{cp .env.docker.example .env}；用 \code{openssl rand -hex 24} 生成 \code{POSTGRES_PASSWORD} 与 \code{MAINTENANCE_TOKEN}，用 \code{openssl rand -base64 32} 生成 \code{ENCRYPTION_KEY}。
+  \item 启动：\code{docker compose up -d --build}；首次启动自动建表，数据卷为空时导入仓库自带的演示星空并标记为 \code{legacy}。
+  \item 验证：\code{docker compose ps} 中 \code{app} 显示 \code{healthy}；\code{curl -I http://127.0.0.1:3000/} 返回 200。
+  \item 注册第一个账号：\code{legacy} 演示星空、问答历史与模型配置会被第一个注册的账号接管；确认后再把地址发给别人。
+  \item 绑定模型：在该账号的“设置 → 模型服务”里添加服务商并选择问答模型；系统不提供全局回退模型。
+  \item 反向代理：Caddy 使用 \code{flush_interval -1}，Nginx 使用 \code{proxy_buffering off}、\code{proxy_read_timeout 300s}，并覆盖 \code{X-Forwarded-For} 而不是追加。
+\end{enumerate}
+
+2G 内存的机器务必先加 swap：Next.js 构建阶段比较吃内存，否则可能被 OOM 杀掉。数据库迁移在 \code{pg_advisory_xact_lock} 下执行，多个实例同时启动也只有一个跑 DDL；连接池上限 10，单条语句 15 秒超时，避免慢查询一直占连接。
+
+\subsection{缓存、清理与备份}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{缓存层级与失效条件}
+  \label{tab:cache}
+  \begin{tabularx}{\textwidth}{L{2.6cm}L{5.4cm}Y}
+    \toprule
+\textbf{层级} & \textbf{存什么} & \textbf{失效条件} \\
+    \midrule
+    Redis 热缓存 & 星空 payload、引文邻域、关系结论、图像分析、上游 host 节流 & TTL 到期（星空 10 分钟、邻域 7 天、关系 30 天、图像 7 天） \\
+    磁盘冷缓存 & 邻域原始响应、关系结论（跨重启保留） & 格式版本号变更；后台按 30 天 / 256MB 淘汰 \\
+    嵌入缓存 & 文本块与查询向量 & 模型变更；进程内 LRU，上限 4096 条 \\
+    图语料缓存 & 每片星空的 chunks、BM25 索引、向量矩阵 & 星空版本（id + updatedAt + 节点/边数）变化 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+会话、图像分析缓存与磁盘缓存不会在读取时自然归零。服务端在数据库首次就绪后跑一次 \code{runMaintenance()}，之后按 \code{MAINTENANCE_INTERVAL_MIN}（默认 360 分钟）重复：删除过期会话、按 \code{last_hit_at} 淘汰 \code{image_index_cache}（默认保留 2000 行 / 30 天）、先删过期再按最旧优先把 \code{data/cache/} 压到容量上限内。手动触发用 \code{pnpm cleanup} 或 \code{POST /api/maintenance/cleanup}（生产需 \code{MAINTENANCE_TOKEN}）。
+
+备份必须同时包含三样东西：PostgreSQL、\code{./data} 数据卷、\code{ENCRYPTION_KEY}。只备份数据库而不备份主密钥，恢复后所有 API Key 都无法解密；只备份主密钥而不备份数据卷，媒体与磁盘缓存会丢失。三者分开保管，才能同时防“数据库泄露”和“服务器丢失”。
+
+\subsection{安全边界}
+
+\begin{table}[htbp]
+  \centering
+  \small
+  \caption{威胁、缓解措施与残余风险}
+  \label{tab:threats}
+  \begin{tabularx}{\textwidth}{L{3.0cm}L{6.6cm}Y}
+    \toprule
+\textbf{威胁} & \textbf{缓解措施} & \textbf{残余风险} \\
+    \midrule
+    提示注入 & 资料与指令隔离、标签转义、不可见字符剥离、输出约束 & 新型表达可能绕过规则；需要持续更新规则与红队样本 \\
+    密钥泄露 & 密钥仅服务端、AES-GCM 落库、日志不回显、错误只取供应商正文 & 能读环境变量或完全控制服务器的人仍可解密；生产建议接 KMS/HSM \\
+    账号越权 & 每条 SQL 带 \code{owner_id}；MCP 令牌绑定 owner；中间件只做 Cookie 存在性检查，路由内 \code{requireUser} 真校验 & 未启用 RLS；新增查询若忘记带 \code{owner_id} 会越权，需要代码审查与测试兜底 \\
+    资源滥用 & 窗口限流、并发上限、每日 token 预算、请求体大小限制 & 限流计数在单进程内存，重启归零；多实例需外部存储 \\
+    上游不可用 & Redis 降级、BM25 兜底、启发式关系、模型错误翻译 & 没有模型时语义关系退化为启发式，界面会明确标注 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+安全设计有一个明确的边界：主密钥与应用在同一台机器上，能读环境变量或完全控制服务器的人仍能解密。它防的是数据库备份泄露、SQL 注入读表与误导出数据，不是替代 KMS。要防“服务器被接管”，需要把主密钥放到 KMS/HSM，由服务端短时解密；这条路已留在架构讨论中，但当前单机自托管版本没有实现。

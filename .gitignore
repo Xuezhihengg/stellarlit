@@ -37,3 +37,15 @@ next-env.d.ts
 
 # 评审凭据只放提交包,不进公开仓库
 /【评审必读】在线演示与体验账号.txt
+
+# 演示视频只放提交包,不进仓库
+*.mp4
+*.mov
+
+# LaTeX 构建产物(保留 .tex 与成品 PDF)
+*.aux
+*.out
+*.toc
+
+# 技术文档成品只保留 docs/StellarLit_技术文档.pdf
+/docs/tech-report/main.pdf

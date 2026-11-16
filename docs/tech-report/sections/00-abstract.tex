@@ -1,0 +1,45 @@
+\thispagestyle{plain}
+\begin{center}
+  {\heiti\LARGE 摘\quad 要}\\[2pt]
+  {\color{rule}\rule{3.2cm}{0.7pt}}
+\end{center}
+\vspace{0.5em}
+
+\addcontentsline{toc}{section}{摘要}
+
+科研文献调研的核心困难，不是“找不到论文”，而是“看得见引用，却看不见为什么相关”。传统检索把论文排成列表，引用网络只回答“谁引用了谁”，通用问答模型又很难为每一句结论给出可核验的出处。StellarLit（论文星图）试图把这三件事接起来：输入标题、DOI 或 arXiv ID，系统从 OpenAlex、arXiv 与 Semantic Scholar 展开引文邻域，用大模型判定论文之间的六类语义关系，并把结果组织成一张可缩放、可点选、可追问的星图。
+
+系统以三层知识图谱为数据契约：L1 结构层保存可公开核验的引用与发表事实，L2 语义层由大模型生产且每条边必须携带原文证据，L3 派生层由社区检测、模块度择优与布局算法生成。AI 方案围绕“可信”与“可控成本”展开：关系判定采用“确定性硬约束过滤 + 多标签 rubric 判定 + 引用片段核验”的两段式管道；问答采用 BM25 与向量双路召回、RRF 融合、图结构扩展与意图重排；Agent 只负责规划“下一步查什么”，停止条件由可复现的覆盖率规则判定；多模态模型把图表转成带归一化坐标的证据块；MCP 则把星空开放为 9 个只读工具，供外部 Agent 复用。
+
+工程上，项目采用 Next.js 15、React 19、TypeScript strict、PostgreSQL 16、Redis 7 与 Docker Compose，前端负责渲染与交互，Route Handlers 只承担 AI 接入与轻量持久化。仓库内置 15 项可重复自检，覆盖类型、规范、RAG、Agent、安全、加密、缓存、数据库与账号隔离。本文档按项目概述、需求分析、系统架构设计、AI 技术方案、核心功能实现、测试与部署、创新点与总结展望展开，并给出关键参数、失败降级路径与已知边界。
+
+\vspace{0.6em}
+\begin{keybox}{一句话概括}
+StellarLit 不是“另一个论文搜索框”，而是一张\textbf{可核验、会长大、能对话}的研究星图：关系有证据，调研能累积，结论可回溯。
+\end{keybox}
+
+\vspace{0.2em}
+\noindent\textbf{关键词：} 文献图谱；检索增强生成；多标签关系判定；Agent 工作流；多模态；MCP；可解释 AI
+
+\vfill
+\begingroup
+\parindent=0pt
+\noindent\begin{minipage}{\textwidth}
+{\heiti\small 文档信息}\par
+\vspace{2pt}
+{\color{rule}\rule{\textwidth}{0.4pt}}\par
+\vspace{2pt}
+\renewcommand{\arraystretch}{1.35}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.8cm}>{\raggedright\arraybackslash}p{\dimexpr\textwidth-2.8cm-14pt\relax}@{}}
+项目名称 & StellarLit · 论文星图 \\
+参赛赛事 & 2026 第九届“传智杯”全国大学生数智创新与 AI 应用大赛 \\
+赛道方向 & AI WEB 网页开发挑战赛 · 赛道 10037 · RAG 知识问答系统（学术文献助手） \\
+团队信息 & 西安交通大学 · 白白BAB · 研究生组 \\
+指导教师 & 白秀秀 \\
+文档版本 & v1.0，2026 年 11 月 16 日 \\
+代码仓库 & \href{https://github.com/Xuezhihengg/stellarlit}{GitHub · Xuezhihengg/stellarlit} \\
+\end{tabular}
+\end{minipage}
+\endgroup
+
+\newpage

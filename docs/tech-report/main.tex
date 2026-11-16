@@ -1,0 +1,190 @@
+\documentclass[UTF8,a4paper,11pt,fontset=none]{ctexart}
+
+% ---------- 页面与字体 ----------
+\usepackage{geometry}
+\geometry{left=2.15cm,right=2.15cm,top=2.35cm,bottom=2.15cm,headsep=0.45cm,footskip=0.95cm}
+\usepackage{fontspec}
+\setmainfont{texgyretermes}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\setsansfont{texgyreheros}[Extension=.otf,UprightFont=*-regular,BoldFont=*-bold,ItalicFont=*-italic,BoldItalicFont=*-bolditalic]
+\setmonofont{Menlo}[Scale=0.84]
+\setCJKmainfont{Songti SC}[BoldFont=Songti SC Bold]
+\setCJKsansfont{Heiti SC}
+\setCJKmonofont{Heiti SC}
+\setCJKfamilyfont{zhhei}{Heiti SC}
+\setCJKfamilyfont{zhsong}{Songti SC}[BoldFont=Songti SC Bold]
+\newcommand{\heiti}{\CJKfamily{zhhei}}
+\newcommand{\songti}{\CJKfamily{zhsong}}
+
+% ---------- 通用宏包 ----------
+\usepackage{amsmath,amssymb}
+\usepackage[table]{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage[most]{tcolorbox}
+\usepackage{listings}
+\usepackage{fontawesome5}
+\usepackage{needspace}
+\usepackage{float}
+\usepackage{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,backgrounds,calc}
+
+% ---------- 颜色 ----------
+\definecolor{ink}{HTML}{111827}
+\definecolor{ink2}{HTML}{1F2937}
+\definecolor{muted}{HTML}{6B7280}
+\definecolor{accent}{HTML}{2563EB}
+\definecolor{accent2}{HTML}{0E7490}
+\definecolor{gold}{HTML}{B58B2A}
+\definecolor{rule}{HTML}{D9DEE8}
+\definecolor{codebg}{HTML}{F7F8FA}
+\definecolor{navy}{HTML}{0A1020}
+\definecolor{soft}{HTML}{F5F7FB}
+\definecolor{warm}{HTML}{B45309}
+
+% ---------- 标题样式 ----------
+\titleformat{\section}[block]
+  {\centering\heiti\Large\color{ink}}
+  {\thesection}{0.7em}{}
+\titleformat{\subsection}
+  {\heiti\Large\color{ink2}}
+  {\thesubsection}{0.6em}{}
+\titleformat{\subsubsection}
+  {\heiti\normalsize\color{ink2}}
+  {\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{13pt plus 2pt minus 2pt}{8pt}
+\titlespacing*{\subsection}{0pt}{10pt plus 1pt minus 1pt}{5pt}
+\titlespacing*{\subsubsection}{0pt}{6pt plus 1pt minus 1pt}{3pt}
+
+% ---------- 页眉页脚 ----------
+\setlength{\headheight}{22pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{muted}StellarLit · 论文星图}
+\fancyhead[R]{\small\color{muted}技术文档}
+\fancyfoot[C]{\small\color{muted}\thepage}
+\renewcommand{\headrulewidth}{0pt}
+
+% ---------- 段落与浮动 ----------
+\linespread{1.15}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.18em plus 0.06em}
+\setlength{\emergencystretch}{2em}
+\tolerance=3000
+\setcounter{tocdepth}{1}
+\setcounter{secnumdepth}{3}
+\renewcommand{\arraystretch}{1.28}
+\setlength{\heavyrulewidth}{0.9pt}
+\setlength{\lightrulewidth}{0.45pt}
+\arrayrulecolor{ink}
+\setlength{\tabcolsep}{6pt}
+\captionsetup{font=small,labelfont={bf,color=accent},labelsep=quad,skip=4pt}
+\setlist[itemize]{leftmargin=2em,itemsep=2pt,topsep=3pt,parsep=0pt}
+\setlist[enumerate]{leftmargin=2.2em,itemsep=2pt,topsep=3pt,parsep=0pt}
+\renewcommand{\figurename}{图}
+\renewcommand{\tablename}{表}
+\renewcommand{\contentsname}{目\quad 录}
+\renewcommand{\refname}{参考文献}
+
+% ---------- 表格列型 ----------
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+% ---------- 代码 ----------
+\lstdefinestyle{code}{
+  backgroundcolor=\color{codebg},
+  basicstyle=\ttfamily\footnotesize,
+  keywordstyle=\color{accent}\bfseries,
+  commentstyle=\color{muted},
+  stringstyle=\color{accent2},
+  frame=single,
+  rulecolor=\color{rule},
+  framerule=0.4pt,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  numbers=left,
+  numberstyle=\tiny\color{muted},
+  numbersep=7pt,
+  xleftmargin=1.4em,
+  framexleftmargin=0.9em,
+  aboveskip=5pt,
+  belowskip=5pt
+}
+\lstset{style=code}
+
+% ---------- 提示框 ----------
+\newtcolorbox{keybox}[1]{
+  enhanced,breakable=false,
+  colback=accent!4,colframe=accent!55,
+  boxrule=0.5pt,arc=1.6mm,
+  left=3.5mm,right=3.5mm,top=2.2mm,bottom=2.2mm,
+  fontupper=\small,
+  title={\heiti\small #1},fonttitle=\bfseries,coltitle=ink2,
+  attach boxed title to top left={xshift=2mm,yshift=-2mm},
+  boxed title style={colback=accent!10,colframe=accent!55,arc=1mm,boxrule=0.4pt}
+}
+\newtcolorbox{designbox}[1]{
+  enhanced,breakable,
+  colback=soft,colframe=rule,
+  boxrule=0.4pt,arc=1.4mm,
+  left=3.5mm,right=3.5mm,top=2mm,bottom=2mm,
+  title={\heiti\small #1},fonttitle=\bfseries,
+  coltitle=ink2,
+  attach boxed title to top left={xshift=2mm,yshift=-2mm},
+  boxed title style={colback=white,colframe=rule,arc=1mm,boxrule=0.4pt}
+}
+\newtcolorbox{warnbox}[1]{
+  enhanced,breakable,
+  colback=warm!4,colframe=warm!45,
+  boxrule=0.4pt,arc=1.2mm,
+  left=3.5mm,right=3.5mm,top=2mm,bottom=2mm,
+  title={\heiti\small #1},fonttitle=\bfseries,
+  coltitle=warm
+}
+
+% ---------- 行内代码 ----------
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}\allowbreak}
+\newcommand{\en}[1]{{\rmfamily #1}}
+
+% ---------- 超链接 ----------
+\hypersetup{
+  colorlinks=true,
+  linkcolor=accent,
+  urlcolor=accent,
+  citecolor=accent,
+  pdftitle={StellarLit 论文星图技术文档},
+  pdfauthor={西安交通大学 白白BAB},
+  pdfsubject={2026 第九届传智杯 AI WEB 网页开发挑战赛 赛道 10037}
+}
+
+\graphicspath{{../screenshots/}}
+
+\begin{document}
+
+\input{sections/00-cover}
+\input{sections/00-abstract}
+\input{sections/00-toc}
+
+\input{sections/01-overview}
+\input{sections/02-requirements}
+\input{sections/03-architecture}
+\input{sections/04-ai}
+\input{sections/05-implementation}
+\input{sections/06-testing-deploy}
+\input{sections/07-conclusion}
+
+\appendix
+\input{sections/08-appendix}
+
+\end{document}

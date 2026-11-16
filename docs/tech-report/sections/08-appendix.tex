@@ -1,0 +1,54 @@
+\section{主要接口与数据契约}
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{主要 HTTP 接口}
+  \label{tab:api}
+  \begin{tabularx}{\textwidth}{L{4.4cm}L{3.2cm}Y}
+    \toprule
+\textbf{接口} & \textbf{方法} & \textbf{用途} \\
+    \midrule
+    \code{/api/seed/resolve} & POST & 解析标题、DOI 或 arXiv ID，返回候选列表 \\
+    \code{/api/starfield/grow} & POST & 展开邻域、建图、聚类、布局、关系判定并持久化 \\
+    \code{/api/starfield/:id} & GET & 取回星空 payload（节点、边、布局、统计） \\
+    \code{/api/starfield/stream} & GET & 建图进度事件流 \\
+    \code{/api/ask} & POST & 检索增强问答，SSE 流式返回 \\
+    \code{/api/ask/history} & GET/POST & 问答历史读取与写入 \\
+    \code{/api/model-settings} & GET/POST & 按账号保存服务商、模型与密钥（密文） \\
+    \code{/api/provider-models} & POST & 校验服务商并拉取真实模型列表 \\
+    \code{/api/mcp} & POST & MCP HTTP 入口，使用个人访问令牌 \\
+    \code{/api/mcp/tokens} & GET/POST/DELETE & 创建、列出、撤销 MCP 令牌 \\
+    \code{/api/usage} & GET & 当前账号当日 token 用量与预算 \\
+    \code{/api/maintenance/cleanup} & POST & 清理过期会话、图像缓存与磁盘缓存 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+语义边的字段含义见第 3.5 节与 \code{src/types/kg.ts}：\code{layer} 决定归属层，\code{evidence} 是语义边的硬性要求，\code{confidence} 与 \code{rationale} 用于展示与排序，\code{provenance} 记录生产者与时间。
+
+\section{术语表}
+
+\begin{table}[htbp]
+  \centering
+  \footnotesize
+  \caption{关键术语}
+  \label{tab:glossary}
+  \begin{tabularx}{\textwidth}{L{3.3cm}Y}
+    \toprule
+\textbf{术语} & \textbf{含义} \\
+    \midrule
+    星空（Starfield） & 一次长期调研的容器，由多个种子累积而成；节点坐标持久，视角可恢复 \\
+    种子（Seed） & 用户输入并确认的一篇论文，是星空生长的起点 \\
+    L1 / L2 / L3 & 结构层、语义层、派生层；按可核验程度分层 \\
+    硬约束 & 年份差、互引、共享任务、相似度下限等确定性过滤条件，不消耗 token \\
+    rubric & 关系判定标准，包含定义、正例、反例与产出上限，用户可编辑 \\
+    RRF & Reciprocal Rank Fusion，按名次融合多路召回，避免分数尺度不可比 \\
+    覆盖率 & 问题实词在证据中出现的比例，用于 Agent 停止判定 \\
+    chunk & RAG 的检索单元，必须携带 \code{locator} 才能回溯原文 \\
+    \code{promptVersion} & 关系预设的版本号；修改 rubric 只作废对应关系的缓存 \\
+    MCP & Model Context Protocol，把星空能力开放给外部 Agent 的标准协议 \\
+    BYOK & Bring Your Own Key，用户自带模型密钥，按账号隔离与计量 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}

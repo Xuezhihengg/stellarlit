@@ -1,0 +1,86 @@
+\needspace{4\baselineskip}
+\section{需求分析}
+
+\subsection{用户画像与典型场景}
+
+StellarLit 面向的不是“随便搜一篇论文”的泛用户，而是需要在一个方向上建立结构认知、并且愿意核对出处的科研读者。下表列出三类典型用户与他们的关键诉求。
+
+\begin{table}[htbp]
+  \centering
+  \caption{用户画像与关键诉求}
+  \label{tab:persona}
+  \begin{tabularx}{\textwidth}{L{3.0cm}L{5.5cm}Y}
+    \toprule
+\textbf{用户} & \textbf{典型任务} & \textbf{最在意什么} \\
+    \midrule
+    低年级研究生 & 进入新方向，读第一篇综述后想快速搭骨架 & 哪些是基线、哪些是同期工作、哪些结论互相矛盾；每条判断能否核对原文 \\
+    交叉方向研究者 & 把本领域方法迁移到另一个任务 & 同一思路在不同任务上的对应工作；“同任务异方法”与“思路类似”能否区分 \\
+    教师 / 评审 & 快速理解一个项目或方向的谱系 & 图谱是否稳定、能否复现；结论是否有证据，而不是模型自由发挥 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+一个完整场景如下：用户输入 \emph{Attention Is All You Need}，系统返回若干候选并说明推荐理由；用户确认后，星空以该论文为锚点展开向前与向后的引文邻域，判定出“基线 / 扩展 / 同任务异方法 / 结论矛盾”等关系。用户点开一条边，看到“B 明确把 A 作为对比对象”的原文片段；随后提问“Transformer 与状态空间模型是什么关系”，系统发现默认检索缺少两篇论文之间的关系证据，自动补查一次，给出带角标的回答，并展示“证据已足够，停止补查”的决策轨迹。用户再把第二篇种子并入同一片星空，老星体留在原位，只长出新分支。
+
+\needspace{3\baselineskip}
+\subsection{功能需求}
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \renewcommand{\arraystretch}{1.12}
+  \caption{功能需求与验收标准}
+  \label{tab:fr}
+  \begin{tabularx}{\textwidth}{L{1.4cm}L{3.7cm}Y L{1.15cm}}
+    \toprule
+\textbf{编号} & \textbf{需求} & \textbf{验收标准} & \textbf{优先级} \\
+    \midrule
+    FR-01 & 种子解析 & 支持标题、DOI、arXiv ID；返回多个候选，含年份、被引量、置信度与推荐理由 & 高 \\
+    FR-02 & 候选确认 & 不自动选择；已在本星空中的论文标记为“并入”，而不是重复新增 & 高 \\
+    FR-03 & 引文邻域 & 向后取参考文献、向前取引用者；主源失败时整片邻域切换到备用源，id 空间保持一致 & 高 \\
+    FR-04 & 语义关系 & 支持六类内置关系与最多 24 条自定义关系；一条边可同时成立多个标签 & 高 \\
+    FR-05 & 关系证据 & 语义边至少一条原文证据；引用片段必须能在对应论文文本中找到 & 高 \\
+    FR-06 & 增量生长 & 同一星空可多次并入种子；已有节点坐标不变，新节点在邻居重心附近松弛 & 高 \\
+    FR-07 & 混合检索 & BM25 与向量双路召回；向量不可用时自动退回词面检索，并在诊断中标注 & 高 \\
+    FR-08 & Agent 补查 & 最多 2 轮 / 5 步；证据不足时补查，足够时停止；每个决策可在界面查看 & 高 \\
+    FR-09 & 流式问答 & SSE 逐段输出；资料事实带 \code{[n]} 角标，通用知识不加角标 & 高 \\
+    FR-10 & 多模态 & 最多 4 张图；抽取 OCR、表格、图表数值与区域坐标；证据可点击定位 & 中 \\
+    FR-11 & 历史与账号 & 星空、问答历史、模型配置、用量与 MCP 令牌按账号隔离 & 高 \\
+    FR-12 & 模型服务 & 按账号绑定多厂商；判定、问答、翻译、向量模型可分别选择 & 高 \\
+    FR-13 & MCP & 9 个只读工具；个人令牌只在创建时返回一次，数据库只存 SHA-256 & 中 \\
+    FR-14 & 安全与配额 & 输入护栏、IP 限流、并发上限、每日 token 预算；失败返回可行动提示 & 高 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{非功能需求}
+
+\begin{table}[H]
+  \centering
+  \footnotesize
+  \renewcommand{\arraystretch}{1.12}
+  \caption{非功能需求与设计手段}
+  \label{tab:nfr}
+  \begin{tabularx}{\textwidth}{L{2.2cm}L{5.6cm}Y}
+    \toprule
+\textbf{维度} & \textbf{目标} & \textbf{设计手段} \\
+    \midrule
+    渲染性能 & 数百至上千节点下保持流畅交互 & 布局在服务端完成；Canvas 一次绘制；悬浮/选中读写分离；动画按 \code{dt} 计算并封顶 64ms \\
+    检索延迟 & 重复提问不重复付费 & 星空语料与 BM25 索引按版本缓存；向量按“供应商 + 文本”缓存；关系结论按 \code{promptVersion} 缓存 \\
+    可靠性 & 外部依赖失败时主流程不中断 & Redis 不可用则直连源站；向量不可用退回 BM25；模型不可用保留检索摘录或明确提示 \\
+    安全 & 密钥不进入浏览器包，不被日志回显 & \code{src/server} 禁止被客户端引用；API Key 以 AES-256-GCM 加密落库；错误消息只取供应商正文 \\
+    可维护 & 改动可被自动检查拦住 & TypeScript strict；ESLint 强制依赖单向；15 项 \code{pnpm check} 直接调用生产代码路径 \\
+    成本 & 单次建图与问答成本可见、可调 & 硬约束预过滤、批量判定、摘要截断、关系缓存、每日 token 预算 \\
+    兼容 & 桌面与窄屏均可使用 & 语义缩放 + 自适应侧栏；关键操作保留键盘可达路径 \\
+    \bottomrule
+  \end{tabularx}
+\end{table}
+
+\subsection{约束与边界}
+
+\begin{itemize}
+  \item \textbf{赛题约束：} 前端 Web 应用为主要呈现形态，后端只作为 AI 能力接入层。项目因此不部署独立业务后端，持久化通过 Route Handlers 与 PostgreSQL / Redis 提供，图谱渲染与 AI 决策轨迹仍在前端完成。
+  \item \textbf{数据约束：} 上游依赖 OpenAlex、arXiv 与 Semantic Scholar 的公开 API；OpenAlex 使用账号注册邮箱进入礼貌池。上游字段缺失时，系统按由细到粗的层级回退主题标签，而不是让候选直接归零。
+  \item \textbf{证据边界：} 当前语义证据到“摘要 + 关系原文”级别，尚未按章节对 arXiv 全文切块。接入全文后，引用可以精确到章节与字符偏移；这一限制在 README 与本文第 7 章中如实说明。
+  \item \textbf{部署边界：} 面向单机自托管场景，未实现连接级多租户行安全策略（RLS），账号隔离依靠仓储层每条 SQL 都带 \code{owner_id}；IP 限流计数在单进程内存中，进程重启归零。
+\end{itemize}

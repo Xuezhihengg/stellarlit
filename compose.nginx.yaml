@@ -1,0 +1,18 @@
+# 独立 nginx 覆盖层:不依赖其他项目的反向代理。
+#
+#   TLS_DIR=/opt/stellarlit/certs \
+#   podman-compose -f compose.yaml -f compose.nginx.yaml up -d
+#
+# 80/443 被占用时默认映射 8443;能独占时把 ports 改成 80:80 / 443:443。
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
+      - "${TLS_DIR:-./certs}:/etc/nginx/certs:ro"
+    depends_on:
+      - app

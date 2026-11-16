@@ -31,3 +31,6 @@ next-env.d.ts
 /data/stellarlit.db
 /data/stellarlit.db-wal
 /data/stellarlit.db-shm
+
+# TLS 证书(绝不入库)
+/certs/
